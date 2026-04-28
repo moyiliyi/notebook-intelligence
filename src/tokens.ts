@@ -53,7 +53,15 @@ export enum ResponseStreamDataType {
 
 export enum ContextType {
   Custom = 'custom',
-  CurrentFile = 'current-file'
+  CurrentFile = 'current-file',
+  OutputContext = 'output-context'
+}
+
+export interface IOutputContextItem {
+  cellSource: string;
+  mimeBundles: { mimeType: string; data: string; sizeTokens: number }[];
+  isError: boolean;
+  truncated: boolean;
 }
 
 export enum MCPServerStatus {
@@ -78,6 +86,7 @@ export interface IContextItem {
   endLine?: number;
   isImage?: boolean;
   mimeType?: string;
+  outputContext?: IOutputContextItem;
 }
 
 export interface ICellContents {
@@ -126,6 +135,7 @@ export enum TelemetryEventType {
   FixThisCodeRequest = 'fix-this-code-request',
   ExplainThisOutputRequest = 'explain-this-output-request',
   TroubleshootThisOutputRequest = 'troubleshoot-this-output-request',
+  OutputFollowUpRequest = 'output-follow-up-request',
   GenerateCodeRequest = 'generate-code-request',
   ChatRequest = 'chat-request',
   InlineChatRequest = 'inline-chat-request',
