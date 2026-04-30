@@ -778,9 +778,16 @@ class ClaudeSessionsListHandler(APIHandler):
             return
 
         try:
-            sessions = list_claude_sessions(get_jupyter_root_dir())
+            cwd = get_jupyter_root_dir()
+            sessions = list_claude_sessions(cwd)
+            # `claude --resume <id>` is cwd-scoped — it looks up the
+            # transcript under the encoded form of the user's CURRENT shell
+            # cwd. Surface the resolved JupyterLab root so the frontend can
+            # paste a `cd ... && claude --resume <id>` command that works
+            # regardless of where the user's terminal happens to be.
             self.finish(json.dumps({
                 "sessions": [asdict(s) for s in sessions],
+                "cwd": os.path.realpath(cwd) if cwd else "",
             }))
         except Exception as e:
             log.exception("Failed to list Claude sessions")

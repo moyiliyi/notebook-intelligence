@@ -17,6 +17,7 @@ import { CheckBoxItem } from './checkbox';
 import { PillItem } from './pill';
 import { mcpServerSettingsToEnabledState } from './mcp-util';
 import { SettingsPanelComponentSkills } from './skills-panel';
+import { writeTextToClipboard } from '../utils';
 
 const OPENAI_COMPATIBLE_CHAT_MODEL_ID = 'openai-compatible-chat-model';
 const LITELLM_COMPATIBLE_CHAT_MODEL_ID = 'litellm-compatible-chat-model';
@@ -704,7 +705,7 @@ function SettingsPanelComponentGeneral(props: any) {
                 <span
                   className="user-code-span"
                   onClick={() => {
-                    navigator.clipboard.writeText(
+                    void writeTextToClipboard(
                       path.join(NBIAPI.config.userConfigDir, 'config.json')
                     );
                     return true;

@@ -275,3 +275,64 @@ export function applyCodeToSelectionInEditor(
     column: cursorColumn
   });
 }
+
+/**
+ * POSIX-shell single-quote escape: every embedded single quote is closed,
+ * emitted as an escaped literal, and the quote re-opened. The result is
+ * safe to splice into a shell command without further sanitization.
+ */
+export function shellSingleQuote(value: string): string {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * Build a `claude --resume <id>` command wrapped in `cd <cwd>` so the
+ * resulting one-liner works from any terminal. `claude --resume` is
+ * cwd-scoped — it looks up the transcript under the encoded form of the
+ * user's CURRENT shell cwd — so the bare id alone only works when the
+ * user happens to be in the JupyterLab working directory.
+ */
+export function buildResumeCommand(cwd: string, sessionId: string): string {
+  if (!cwd) {
+    return `claude --resume ${sessionId}`;
+  }
+  return `cd ${shellSingleQuote(cwd)} && claude --resume ${sessionId}`;
+}
+
+/**
+ * Write `text` to the system clipboard. Falls back to a hidden textarea +
+ * `document.execCommand('copy')` when the async Clipboard API is unavailable
+ * or rejects (e.g. missing permission, insecure context).
+ */
+export async function writeTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === 'function'
+    ) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to legacy path
+  }
+
+  if (typeof document === 'undefined') {
+    return false;
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'absolute';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}

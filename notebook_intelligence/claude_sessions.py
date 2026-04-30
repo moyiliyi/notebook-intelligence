@@ -116,6 +116,7 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
         return None
 
     preview = ""
+    first_parsed_obj = True
 
     try:
         with path.open("r", encoding="utf-8") as fh:
@@ -129,6 +130,13 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
                     # Tolerate the occasional partial write at the tail
                     # of an in-progress session.
                     continue
+                # Sidechain transcripts (subagent probes) aren't resumable
+                # via `claude --resume`; skip files whose first record is a
+                # sidechain.
+                if first_parsed_obj:
+                    first_parsed_obj = False
+                    if obj.get("isSidechain") is True:
+                        return None
                 if not _is_user_message(obj):
                     continue
                 preview = _extract_preview(obj)
