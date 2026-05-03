@@ -358,7 +358,9 @@ class ActiveDocumentWatcher {
   private static _languageRegistry: IEditorLanguageRegistry;
 }
 
-class NBIInlineCompletionProvider implements IInlineCompletionProvider<IInlineCompletionItem> {
+class NBIInlineCompletionProvider
+  implements IInlineCompletionProvider<IInlineCompletionItem>
+{
   constructor(telemetryEmitter: TelemetryEmitter) {
     this._telemetryEmitter = telemetryEmitter;
   }
@@ -641,7 +643,6 @@ class MCPConfigEditor {
   private _tmpMCPConfigFilename = 'nbi.mcp.temp.json';
   private _isOpen = false;
 }
-
 
 /**
  * Initialization data for the @notebook-intelligence/notebook-intelligence extension.

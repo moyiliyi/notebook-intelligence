@@ -4,7 +4,8 @@ import React from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighterBase } from 'react-syntax-highlighter';
-const SyntaxHighlighter = SyntaxHighlighterBase as unknown as React.ComponentType<any>;
+const SyntaxHighlighter =
+  SyntaxHighlighterBase as unknown as React.ComponentType<any>;
 import {
   oneLight,
   oneDark

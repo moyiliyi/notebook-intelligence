@@ -692,12 +692,6 @@ pre:has(.code-block-header) {
   color: var(--jp-error-color1);
 }
 
-/* Coding Agent launcher tile: Anthropic orange icon */
-.jp-LauncherCard[data-category='Coding Agent'] .jp-LauncherCard-icon svg,
-.jp-Launcher-sectionHeader svg[data-icon='notebook-intelligence:claude-icon'] {
-  color: #d97757;
-}
-
 /* Pin the Coding Agent section to the top of the launcher.
    JupyterLab hardcodes Notebook/Console/Other as the first categories,
    so we use flex order to visually promote our section above them. */
@@ -705,9 +699,11 @@ pre:has(.code-block-header) {
   display: flex !important;
   flex-direction: column;
 }
+
 .jp-Launcher-cwd {
   order: -2;
 }
+
 .jp-Launcher-section:has(.jp-LauncherCard[data-category='Coding Agent']) {
   order: -1;
 }
@@ -2464,4 +2460,11 @@ svg.access-token-warning {
   color: var(--jp-brand-color0);
   font-size: var(--jp-ui-font-size0);
   white-space: nowrap;
+}
+
+/* Coding Agent launcher tile: Anthropic orange icon.
+   Placed last to satisfy no-descending-specificity lint rule. */
+.jp-LauncherCard[data-category='Coding Agent'] .jp-LauncherCard-icon svg,
+.jp-Launcher-sectionHeader svg[data-icon='notebook-intelligence:claude-icon'] {
+  color: #d97757;
 }

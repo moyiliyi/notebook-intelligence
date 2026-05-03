@@ -56,13 +56,17 @@ export function LauncherPicker({
         type="text"
         placeholder="Filter sessions..."
         value={filter}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => setFilter(e.target.value)}
+        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+          setFilter(e.target.value)
+        }
         autoFocus
       />
       <div className="nflx-claude-code-picker-list">
         {filtered.length === 0 ? (
           <div className="nflx-claude-code-picker-empty">
-            {filter ? 'No sessions match your filter.' : 'No previous sessions found.'}
+            {filter
+              ? 'No sessions match your filter.'
+              : 'No previous sessions found.'}
           </div>
         ) : (
           filtered.map(session => (
