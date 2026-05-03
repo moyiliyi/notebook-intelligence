@@ -20,7 +20,8 @@ module.exports = {
   // tiktoken pulls in WebAssembly that doesn't load cleanly under jsdom.
   // The tests don't depend on real tokenization, so stub it out.
   moduleNameMapper: {
-    '^tiktoken$': '<rootDir>/tests/ts/__mocks__/tiktoken.ts'
+    '^tiktoken$': '<rootDir>/tests/ts/__mocks__/tiktoken.ts',
+    '\\.svg$': '<rootDir>/tests/ts/__mocks__/svg.ts'
   },
   clearMocks: true
 };

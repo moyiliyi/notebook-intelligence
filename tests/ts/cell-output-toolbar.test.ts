@@ -43,6 +43,25 @@ jest.mock(
   () => ({ NotebookPanel: FakeNotebookPanel }),
   { virtual: true }
 );
+// LabIcon under jsdom would pull in widget/DOM machinery we don't need; a
+// stub `element({ container, tag })` that appends an empty span is enough
+// to verify rendering shape.
+jest.mock(
+  '@jupyterlab/ui-components',
+  () => ({
+    LabIcon: class {
+      constructor(_opts: { name: string; svgstr: string }) {
+        // Intentionally empty.
+      }
+      element(opts: { container: HTMLElement; tag?: string }): HTMLElement {
+        const node = document.createElement(opts.tag ?? 'div');
+        opts.container.appendChild(node);
+        return node;
+      }
+    }
+  }),
+  { virtual: true }
+);
 
 const featuresState = {
   explain_error: { enabled: true, locked: false },
