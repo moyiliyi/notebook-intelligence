@@ -22,7 +22,11 @@ import {
 import { NotebookGenerationPopover } from './components/notebook-generation-popover';
 
 const TOOLBAR_BUTTON_NAME = 'nbi-generate-notebook';
-const TOOLBAR_BUTTON_RANK = 11;
+const TOOLBAR_STATUS_NAME = 'nbi-generate-notebook-status';
+// Insert at the very left of the notebook toolbar so the button (and the
+// progress pill that sits next to it) are easy to discover.
+const TOOLBAR_BUTTON_INDEX = 0;
+const TOOLBAR_STATUS_INDEX = 1;
 
 interface INotebookGenerationToolbarOptions {
   app: JupyterFrontEnd;
@@ -210,18 +214,23 @@ class NotebookGenerationToolbarController {
       return;
     }
     if (!message) {
-      if (this._statusEl && this._statusEl.parentElement) {
-        this._statusEl.parentElement.removeChild(this._statusEl);
+      if (this._statusWidget) {
+        this._statusWidget.dispose();
+        this._statusWidget = null;
       }
-      this._statusEl = null;
       return;
     }
-    if (!this._statusEl) {
-      this._statusEl = document.createElement('div');
-      this._statusEl.className = 'nbi-notebook-generation-status';
-      this._panel.toolbar.node.appendChild(this._statusEl);
+    if (!this._statusWidget) {
+      const widget = new Widget();
+      widget.addClass('nbi-notebook-generation-status');
+      this._panel.toolbar.insertItem(
+        TOOLBAR_STATUS_INDEX,
+        TOOLBAR_STATUS_NAME,
+        widget
+      );
+      this._statusWidget = widget;
     }
-    this._statusEl.textContent = message;
+    this._statusWidget.node.textContent = message;
   }
 
   // Defaults ON; remembers the user's last choice for the rest of the tab.
@@ -232,7 +241,7 @@ class NotebookGenerationToolbarController {
   private _panel: NotebookPanel;
   private _popover: NotebookGenerationPopoverWidget | null = null;
   private _activeProgressRequestId: string | null = null;
-  private _statusEl: HTMLDivElement | null = null;
+  private _statusWidget: Widget | null = null;
   private _statusHideTimer: ReturnType<typeof setTimeout> | null = null;
 }
 
@@ -254,10 +263,10 @@ export class NotebookGenerationToolbarExtension
     const button: ToolbarButton = new ToolbarButton({
       icon: this._options.icon,
       onClick: () => controller.openPopover(button),
-      tooltip: 'Generate or update notebook with AI'
+      tooltip: 'Update active notebook with AI'
     });
     button.addClass('nbi-notebook-generation-toolbar-button');
-    panel.toolbar.insertItem(TOOLBAR_BUTTON_RANK, TOOLBAR_BUTTON_NAME, button);
+    panel.toolbar.insertItem(TOOLBAR_BUTTON_INDEX, TOOLBAR_BUTTON_NAME, button);
     return new DisposableDelegate(() => {
       controller.dispose();
       button.dispose();

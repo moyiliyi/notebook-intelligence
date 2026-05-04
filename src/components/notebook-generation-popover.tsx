@@ -67,7 +67,7 @@ export function NotebookGenerationPopover(
           <VscSparkle />
         </div>
         <div className="notebook-generation-popover-title">
-          Generate or update notebook
+          Update active notebook
         </div>
         <div style={{ flexGrow: 1 }}></div>
         <div
@@ -83,7 +83,7 @@ export function NotebookGenerationPopover(
           ref={textareaRef}
           className="notebook-generation-popover-input"
           rows={4}
-          placeholder="Describe the notebook you want to create or how to update the active one..."
+          placeholder="Describe how to update the active notebook..."
           value={prompt}
           onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
             setPrompt(event.target.value)

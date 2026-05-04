@@ -6,7 +6,7 @@
 // in the chat sidebar's heavyweight ESM imports.
 
 export const NOTEBOOK_GENERATION_PROMPT_PREFIX =
-  'Create a new notebook or update active notebook based on this request: ';
+  'Update active notebook based on this request: ';
 
 export const NOTEBOOK_GENERATION_PROGRESS_EVENT =
   'copilotSidebar:notebookGenerationProgress';
