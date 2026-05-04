@@ -30,12 +30,14 @@ interface INotebookGenerationToolbarOptions {
   chatSidebarId: string;
 }
 
+interface INotebookGenerationPopoverWidgetOptions {
+  initialShowInChat: boolean;
+  onSubmit: (prompt: string, showInChat: boolean) => void;
+  onClose: () => void;
+}
+
 class NotebookGenerationPopoverWidget extends ReactWidget {
-  constructor(options: {
-    initialShowInChat: boolean;
-    onSubmit: (prompt: string, showInChat: boolean) => void;
-    onClose: () => void;
-  }) {
+  constructor(options: INotebookGenerationPopoverWidgetOptions) {
     super();
     this.addClass('nbi-notebook-generation-popover-host');
     this._options = options;
@@ -82,11 +84,7 @@ class NotebookGenerationPopoverWidget extends ReactWidget {
     );
   }
 
-  private _options: {
-    initialShowInChat: boolean;
-    onSubmit: (prompt: string, showInChat: boolean) => void;
-    onClose: () => void;
-  };
+  private _options: INotebookGenerationPopoverWidgetOptions;
 }
 
 class NotebookGenerationToolbarController {
@@ -115,9 +113,7 @@ class NotebookGenerationToolbarController {
       onClose: () => this.closePopover()
     });
     Widget.attach(this._popover, document.body);
-    // ReactWidget renders its tree in response to an update-request message;
-    // Widget.attach by itself doesn't queue one, so without this call the
-    // popover host appears empty in the DOM.
+    // ReactWidget renders on update-request; Widget.attach doesn't queue one.
     this._popover.update();
     this._popover.positionAt(buttonRect);
   }
@@ -138,6 +134,10 @@ class NotebookGenerationToolbarController {
         this._onProgress
       );
       this._activeProgressRequestId = null;
+    }
+    if (this._statusHideTimer !== null) {
+      clearTimeout(this._statusHideTimer);
+      this._statusHideTimer = null;
     }
     this._setStatus(null);
   }
@@ -187,13 +187,23 @@ class NotebookGenerationToolbarController {
       this._activeProgressRequestId = null;
       if (detail.error) {
         this._setStatus(`Generation failed: ${detail.error}`);
-        setTimeout(() => this._setStatus(null), 4000);
+        this._scheduleStatusHide(4000);
       } else {
         this._setStatus('Notebook generation complete');
-        setTimeout(() => this._setStatus(null), 2500);
+        this._scheduleStatusHide(2500);
       }
     }
   };
+
+  private _scheduleStatusHide(delayMs: number): void {
+    if (this._statusHideTimer !== null) {
+      clearTimeout(this._statusHideTimer);
+    }
+    this._statusHideTimer = setTimeout(() => {
+      this._statusHideTimer = null;
+      this._setStatus(null);
+    }, delayMs);
+  }
 
   private _setStatus(message: string | null): void {
     if (this._panel.isDisposed) {
@@ -214,9 +224,7 @@ class NotebookGenerationToolbarController {
     this._statusEl.textContent = message;
   }
 
-  // Persist the toggle across popover invocations (per-tab). The issue
-  // requires the toggle to default ON the first time, then remember the
-  // user's last choice.
+  // Defaults ON; remembers the user's last choice for the rest of the tab.
   private static _showInChat = true;
 
   private _app: JupyterFrontEnd;
@@ -225,6 +233,7 @@ class NotebookGenerationToolbarController {
   private _popover: NotebookGenerationPopoverWidget | null = null;
   private _activeProgressRequestId: string | null = null;
   private _statusEl: HTMLDivElement | null = null;
+  private _statusHideTimer: ReturnType<typeof setTimeout> | null = null;
 }
 
 export class NotebookGenerationToolbarExtension

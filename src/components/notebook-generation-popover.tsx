@@ -27,7 +27,6 @@ export function NotebookGenerationPopover(
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    // Auto-focus the textarea on mount.
     textareaRef.current?.focus();
   }, []);
 
