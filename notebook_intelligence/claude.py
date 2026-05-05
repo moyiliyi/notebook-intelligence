@@ -140,13 +140,21 @@ def _normalize_anthropic_credential(value: Any) -> str | None:
     return value.strip() or None
 
 
+def _create_anthropic_client(api_key: str = None, base_url: str = None) -> Anthropic:
+    """Create an Anthropic client with normalized credentials and default headers."""
+    api_key = _normalize_anthropic_credential(api_key)
+    base_url = _normalize_anthropic_credential(base_url)
+    return Anthropic(
+        api_key=api_key,
+        base_url=base_url,
+        default_headers={"User-Agent": f"NotebookIntelligence/{NBI_VERSION}"}
+    )
+
+
 def fetch_claude_models(api_key: str = None, base_url: str = None) -> list[dict]:
     """Fetch available models from the Anthropic API and update cache."""
     try:
-        api_key = _normalize_anthropic_credential(api_key)
-        base_url = _normalize_anthropic_credential(base_url)
-        client = Anthropic(api_key=api_key, base_url=base_url,
-                           default_headers={"User-Agent": f"NotebookIntelligence/{NBI_VERSION}"})
+        client = _create_anthropic_client(api_key, base_url)
         page = client.models.list(limit=100)
         models = []
         for model in page.data:
@@ -174,9 +182,7 @@ class ClaudeChatModel(ChatModel):
         self._model_name = model_info["name"]
         self._context_window = model_info["context_window"]
         self._supports_tools = True
-        self._client = Anthropic(base_url=_normalize_anthropic_credential(base_url),
-                                 api_key=_normalize_anthropic_credential(api_key),
-                                 default_headers={"User-Agent": f"NotebookIntelligence/{NBI_VERSION}"})
+        self._client = _create_anthropic_client(api_key, base_url)
 
     @property
     def id(self) -> str:
@@ -259,8 +265,7 @@ class ClaudeCodeInlineCompletionModel(InlineCompletionModel):
         self._model_id = model_id
         self._model_name = model_info["name"]
         self._context_window = model_info["context_window"]
-        self._client = Anthropic(base_url=_normalize_anthropic_credential(base_url),
-                                 api_key=_normalize_anthropic_credential(api_key))
+        self._client = _create_anthropic_client(api_key, base_url)
 
     @property
     def id(self) -> str:
