@@ -60,6 +60,7 @@ CLAUDE_AGENT_CLIENT_RESPONSE_WAIT_TIME = float(os.getenv("NBI_CLAUDE_AGENT_CLIEN
 CLAUDE_AGENT_CLIENT_RESPONSE_TIMEOUT = float(os.getenv("NBI_CLAUDE_AGENT_CLIENT_RESPONSE_TIMEOUT", "1800"))
 CLAUDE_AGENT_CLIENT_UPDATE_WAIT_TIME = float(os.getenv("NBI_CLAUDE_AGENT_CLIENT_UPDATE_WAIT_TIME", "0.5"))
 CLAUDE_AGENT_CONNECT_TIMEOUT = float(os.getenv("NBI_CLAUDE_AGENT_CONNECT_TIMEOUT", "15"))
+CLAUDE_AGENT_HEARTBEAT_INTERVAL = float(os.getenv("NBI_CLAUDE_AGENT_HEARTBEAT_INTERVAL", "20"))
 
 _current_request = None
 _current_response = None
@@ -673,6 +674,7 @@ class ClaudeCodeClient():
         signal.connect(_on_client_response)
 
         start_time = time.time()
+        last_heartbeat = start_time
 
         try:
             while True:
@@ -717,6 +719,18 @@ class ClaudeCodeClient():
                         "success": False,
                         "error": "Claude agent response timeout",
                     }
+                current_time = time.time()
+                if current_time - last_heartbeat >= CLAUDE_AGENT_HEARTBEAT_INTERVAL:
+                    if self._websocket_connector is not None:
+                        try:
+                            self._websocket_connector.write_message({
+                                "type": BackendMessageType.ClaudeCodeStatusChange,
+                                "data": {}
+                            })
+                            last_heartbeat = current_time
+                            log.debug(f"Heartbeat sent after {int(current_time - start_time)}s")
+                        except Exception as e:
+                            log.warning(f"Failed to send heartbeat: {e}")
                 time.sleep(CLAUDE_AGENT_CLIENT_RESPONSE_WAIT_TIME)
         finally:
             signal.disconnect(_on_client_response)
