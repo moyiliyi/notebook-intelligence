@@ -11,7 +11,10 @@ import {
   isDarkTheme,
   getTokenCount,
   cellOutputAsText,
-  applyCodeToSelectionInEditor
+  applyCodeToSelectionInEditor,
+  buildResumeCommand,
+  shellSingleQuote,
+  writeTextToClipboard
 } from '../../src/utils';
 
 describe('removeAnsiChars', () => {
@@ -331,5 +334,138 @@ describe('cellOutputAsText', () => {
       }
     ]);
     expect(cellOutputAsText(cell)).toBe('first\nsecond');
+  });
+});
+
+describe('writeTextToClipboard', () => {
+  const originalClipboard = (navigator as any).clipboard;
+  const originalExecCommand = (document as any).execCommand;
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: originalClipboard,
+      configurable: true,
+      writable: true
+    });
+    Object.defineProperty(document, 'execCommand', {
+      value: originalExecCommand,
+      configurable: true,
+      writable: true
+    });
+  });
+
+  it('writes via the async Clipboard API when available', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true
+    });
+
+    const ok = await writeTextToClipboard('abc-123');
+
+    expect(ok).toBe(true);
+    expect(writeText).toHaveBeenCalledWith('abc-123');
+  });
+
+  it('falls back to execCommand when the Clipboard API rejects', async () => {
+    const writeText = jest.fn().mockRejectedValue(new Error('denied'));
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true
+    });
+    const execSpy = jest.fn().mockReturnValue(true);
+    Object.defineProperty(document, 'execCommand', {
+      value: execSpy,
+      configurable: true,
+      writable: true
+    });
+
+    const ok = await writeTextToClipboard('fallback-id');
+
+    expect(ok).toBe(true);
+    expect(writeText).toHaveBeenCalledWith('fallback-id');
+    expect(execSpy).toHaveBeenCalledWith('copy');
+  });
+
+  it('falls back to execCommand when the Clipboard API is missing', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+      writable: true
+    });
+    const execSpy = jest.fn().mockReturnValue(true);
+    Object.defineProperty(document, 'execCommand', {
+      value: execSpy,
+      configurable: true,
+      writable: true
+    });
+
+    const ok = await writeTextToClipboard('missing-api-id');
+
+    expect(ok).toBe(true);
+    expect(execSpy).toHaveBeenCalledWith('copy');
+  });
+
+  it('returns false when both paths fail', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+      writable: true
+    });
+    const execSpy = jest.fn().mockReturnValue(false);
+    Object.defineProperty(document, 'execCommand', {
+      value: execSpy,
+      configurable: true,
+      writable: true
+    });
+
+    const ok = await writeTextToClipboard('nope');
+
+    expect(ok).toBe(false);
+  });
+});
+
+describe('shellSingleQuote', () => {
+  it('wraps a plain string in single quotes', () => {
+    expect(shellSingleQuote('hello')).toBe("'hello'");
+  });
+
+  it('preserves spaces and slashes verbatim inside the quotes', () => {
+    expect(shellSingleQuote('/Users/me/My Project')).toBe(
+      "'/Users/me/My Project'"
+    );
+  });
+
+  it('escapes embedded single quotes via close-escape-reopen', () => {
+    // Apostrophe → close-quote, escaped literal, re-open-quote.
+    expect(shellSingleQuote("it's")).toBe("'it'\\''s'");
+  });
+
+  it('handles multiple embedded quotes', () => {
+    expect(shellSingleQuote("a'b'c")).toBe("'a'\\''b'\\''c'");
+  });
+
+  it('handles an empty string', () => {
+    expect(shellSingleQuote('')).toBe("''");
+  });
+});
+
+describe('buildResumeCommand', () => {
+  it('wraps cd around the resume invocation when cwd is provided', () => {
+    expect(buildResumeCommand('/tmp/proj', 'abc-123')).toBe(
+      "cd '/tmp/proj' && claude --resume abc-123"
+    );
+  });
+
+  it('quotes paths with spaces correctly', () => {
+    expect(buildResumeCommand('/Users/me/My Project', 'xyz')).toBe(
+      "cd '/Users/me/My Project' && claude --resume xyz"
+    );
+  });
+
+  it('falls back to a bare resume when cwd is empty', () => {
+    expect(buildResumeCommand('', 'abc-123')).toBe('claude --resume abc-123');
   });
 });

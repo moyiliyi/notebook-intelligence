@@ -27,6 +27,15 @@ def _user_line(session_id: str, text: str) -> dict:
     }
 
 
+def _sidechain_line(session_id: str, content: str = "Warmup") -> dict:
+    return {
+        "type": "user",
+        "isSidechain": True,
+        "message": {"role": "user", "content": content},
+        "sessionId": session_id,
+    }
+
+
 def _assistant_line(session_id: str) -> dict:
     return {
         "type": "assistant",
@@ -167,6 +176,55 @@ class TestListSessions:
 
         result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
         assert [s.session_id for s in result] == ["main"]
+
+    def test_skips_top_level_sidechain_files(
+        self, sessions_dir, fake_claude_home, project_cwd
+    ):
+        # Some Claude Agent SDK setups land sidechain "Warmup" probes (the
+        # /clear pre-roll) at the top level under short agent-* names.
+        # These aren't resumable via `claude --resume`, so they must not show
+        # up in the picker.
+        _write_jsonl(
+            sessions_dir / "real-session.jsonl",
+            [_user_line("real-session", "hello")],
+        )
+        _write_jsonl(
+            sessions_dir / "agent-a94b68b.jsonl",
+            [_sidechain_line("real-session")],
+        )
+
+        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        assert [s.session_id for s in result] == ["real-session"]
+
+    def test_sidechain_filter_skips_corrupt_first_line(
+        self, sessions_dir, fake_claude_home, project_cwd
+    ):
+        # A malformed first line falls through to the next; if that next line
+        # is a sidechain, the file is still filtered.
+        sessions_dir.mkdir(parents=True)
+        path = sessions_dir / "agent-corrupt.jsonl"
+        with path.open("w", encoding="utf-8") as fh:
+            fh.write("{ broken\n")
+            fh.write(json.dumps(_sidechain_line("real-session")) + "\n")
+
+        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        assert result == []
+
+    def test_keeps_files_when_isSidechain_is_false(
+        self, sessions_dir, fake_claude_home, project_cwd
+    ):
+        # Real sessions explicitly mark isSidechain:false; treat them as
+        # normal even though the field is present.
+        line = {
+            "type": "user",
+            "isSidechain": False,
+            "message": {"role": "user", "content": "hello"},
+            "sessionId": "real",
+        }
+        _write_jsonl(sessions_dir / "real.jsonl", [line])
+
+        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        assert [s.session_id for s in result] == ["real"]
 
     def test_tolerates_partial_trailing_line(
         self, sessions_dir, fake_claude_home, project_cwd

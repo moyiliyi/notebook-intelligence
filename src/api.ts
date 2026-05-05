@@ -48,6 +48,14 @@ export interface IClaudeSessionInfo {
   preview: string;
 }
 
+export interface IClaudeSessionList {
+  sessions: IClaudeSessionInfo[];
+  // The realpath-resolved JupyterLab working directory the sessions live
+  // under. `claude --resume <id>` is cwd-scoped, so the frontend pairs this
+  // with the session id to produce a copyable shell command.
+  cwd: string;
+}
+
 export enum ClaudeToolType {
   ClaudeCodeTools = 'claude-code:built-in-tools',
   JupyterUITools = 'nbi:built-in-jupyter-ui-tools'
@@ -873,11 +881,11 @@ export class NBIAPI {
     });
   }
 
-  static async listClaudeSessions(): Promise<IClaudeSessionInfo[]> {
-    return new Promise<IClaudeSessionInfo[]>((resolve, reject) => {
+  static async listClaudeSessions(): Promise<IClaudeSessionList> {
+    return new Promise<IClaudeSessionList>((resolve, reject) => {
       requestAPI<any>('claude-sessions', { method: 'GET' })
         .then(data => {
-          resolve(data.sessions ?? []);
+          resolve({ sessions: data.sessions ?? [], cwd: data.cwd ?? '' });
         })
         .catch(reason => {
           console.error(`Failed to list Claude sessions.\n${reason}`);

@@ -16,7 +16,7 @@ import {
   VscAdd
 } from 'react-icons/vsc';
 import { JupyterFrontEnd } from '@jupyterlab/application';
-import { isDarkTheme } from './utils';
+import { isDarkTheme, writeTextToClipboard } from './utils';
 import { IActiveDocumentInfo } from './tokens';
 
 type MarkdownRendererProps = {
@@ -44,7 +44,7 @@ export function MarkdownRenderer({
           const language = match ? match[1] : 'text';
 
           const handleCopyClick = () => {
-            navigator.clipboard.writeText(codeString);
+            void writeTextToClipboard(codeString);
           };
 
           const handleInsertAtCursorClick = () => {

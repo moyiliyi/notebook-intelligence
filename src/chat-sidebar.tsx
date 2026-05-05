@@ -62,7 +62,11 @@ import {
   VscAttach
 } from 'react-icons/vsc';
 
-import { extractLLMGeneratedCode, isDarkTheme } from './utils';
+import {
+  extractLLMGeneratedCode,
+  isDarkTheme,
+  writeTextToClipboard
+} from './utils';
 import { CheckBoxItem } from './components/checkbox';
 import { mcpServerSettingsToEnabledState } from './components/mcp-util';
 import claudeSvgStr from '../style/icons/claude.svg';
@@ -3930,7 +3934,7 @@ function GitHubCopilotLoginDialogBodyComponent(props: any) {
               <span
                 className="user-code-span"
                 onClick={() => {
-                  navigator.clipboard.writeText(deviceActivationCode);
+                  void writeTextToClipboard(deviceActivationCode);
                   return true;
                 }}
               >
