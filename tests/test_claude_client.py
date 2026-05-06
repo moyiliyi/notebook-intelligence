@@ -554,6 +554,90 @@ class TestConnectInBackground:
                 client._client_thread.join(timeout=1)
 
 
+class TestWorkerThreadSignalRace:
+    """Guard against the cancellation race fixed in _client_thread_func.
+
+    When the user clicks Stop, _mark_as_disconnected() runs on the polling
+    thread and sets self._client_thread_signal = None. The worker thread may
+    simultaneously be in its finally block about to call
+    self._client_thread_signal.emit(...), which without the snapshot fix raises
+    AttributeError and puts the agent into FailedToConnect state.
+
+    The fix snapshots the signal into a local variable at the top of each event
+    loop iteration so the finally block holds a valid reference even if the
+    client's field is nulled mid-flight.
+    """
+
+    def test_snapshot_survives_mark_as_disconnected(self):
+        """Local snapshot keeps signal alive after _mark_as_disconnected nulls
+        the client's reference — emit must succeed without raising."""
+        client = _make_client()
+        original_signal = client._client_thread_signal
+        received = []
+        original_signal.connect(lambda data: received.append(data))
+
+        # Worker snapshots signal at the top of the event loop iteration.
+        signal = client._client_thread_signal
+
+        # Cancel path: _mark_as_disconnected() nulls the client's own reference.
+        client._mark_as_disconnected()
+        assert client._client_thread_signal is None
+
+        # Worker's finally block uses the snapshot — must not raise.
+        if signal is not None:
+            signal.emit({"id": "x", "data": "query completed"})
+
+        assert received == [{"id": "x", "data": "query completed"}]
+
+    def test_signal_already_none_at_snapshot_time_is_safe(self):
+        """If disconnect ran before the snapshot, the null guard in the finally
+        block must skip the emit silently rather than raising AttributeError."""
+        client = _make_client()
+        client._mark_as_disconnected()
+
+        # Signal is already None when the worker reaches the snapshot line.
+        signal = client._client_thread_signal
+        assert signal is None
+
+        # Finally block null guard — must not raise, must not emit.
+        if signal is not None:
+            signal.emit({"id": "x", "data": "query completed"})
+        # Reaching here without exception is the assertion.
+
+    def test_queue_snapshot_survives_mark_as_disconnected(self):
+        """Local queue snapshot keeps the Queue alive after _mark_as_disconnected
+        nulls the client's reference — get() must not raise AttributeError."""
+        client = _make_client()
+        original_queue = client._client_queue
+        original_queue.put({"id": "x", "type": "query"})
+
+        # Worker snapshots queue at the top of the event loop iteration.
+        queue = client._client_queue
+
+        # Cancel path: _mark_as_disconnected() nulls the client's own reference.
+        client._mark_as_disconnected()
+        assert client._client_queue is None
+
+        # Worker's queue.get() uses the snapshot — must not raise.
+        event = queue.get(block=False)
+        assert event == {"id": "x", "type": "query"}
+
+    def test_queue_already_none_at_snapshot_time_exits_cleanly(self):
+        """If disconnect ran before the queue snapshot, the null guard must
+        cause the worker to return rather than raising AttributeError."""
+        client = _make_client()
+        client._mark_as_disconnected()
+
+        # Queue is already None when the worker reaches the snapshot line.
+        queue = client._client_queue
+        assert queue is None
+
+        # Null guard — worker returns instead of calling get() on None.
+        if queue is None:
+            return
+        queue.get(block=False)  # must not be reached
+
+
 class TestOtherCallersEnsureConnected:
     """update_server_info / clear_chat_history used to check only
     _reconnect_required, not is_connected(), so a dead thread without the

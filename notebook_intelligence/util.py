@@ -96,6 +96,11 @@ def is_provider_enabled_in_env(provider_id: str) -> bool:
     enabled_providers = os.environ.get('NBI_ENABLED_PROVIDERS', '')
     return provider_id in enabled_providers.split(',')
 
+def _emit(signal, payload: dict) -> None:
+    if signal is not None:
+        signal.emit(payload)
+
+
 class ThreadSafeWebSocketConnector():
   def __init__(self, websocket_handler):
     self.io_loop = ioloop.IOLoop.current()
