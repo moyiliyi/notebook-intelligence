@@ -41,7 +41,11 @@ from notebook_intelligence.feature_flags import (
     resolve_feature_flag,
 )
 from notebook_intelligence.claude import ClaudeCodeChatParticipant, fetch_claude_models
-from notebook_intelligence.claude_sessions import list_sessions as list_claude_sessions, list_all_sessions as list_all_claude_sessions
+from notebook_intelligence.claude_sessions import (
+    NBI_CONTEXT_PREFIX,
+    list_all_sessions as list_all_claude_sessions,
+    list_sessions as list_claude_sessions,
+)
 import notebook_intelligence.github_copilot as github_copilot
 from notebook_intelligence.built_in_toolsets import built_in_toolsets
 from notebook_intelligence.util import ThreadSafeWebSocketConnector, get_jupyter_root_dir, set_jupyter_root_dir, is_builtin_tool_enabled_in_env, is_provider_enabled_in_env
@@ -1364,7 +1368,7 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
 
             current_directory = data.get('currentDirectory')
             if (is_claude_code_mode or chat_mode.id == 'agent') and current_directory is not None:
-                current_directory_file_msg = f"Additional context: Current directory open in Jupyter is: '{current_directory}'"
+                current_directory_file_msg = f"{NBI_CONTEXT_PREFIX} '{current_directory}'"
                 if filename != '':
                     current_directory_file_msg += f" and current file is: '{filename}'"
                 chat_history.append({"role": "user", "content": current_directory_file_msg})

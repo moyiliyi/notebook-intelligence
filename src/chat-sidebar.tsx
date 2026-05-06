@@ -768,7 +768,8 @@ function ChatResponse(props: any) {
               );
             case ResponseStreamDataType.Progress:
               // show only while generating and no more message available
-              return index === groupedContents.length - 1 && props.showGenerating ? (
+              return index === groupedContents.length - 1 &&
+                props.showGenerating ? (
                 <div className="chat-response-progress" key={`key-${index}`}>
                   &#x2713; {item.content}
                 </div>
