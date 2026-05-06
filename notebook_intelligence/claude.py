@@ -727,12 +727,13 @@ class ClaudeCodeClient():
                     if self._websocket_connector is not None:
                         try:
                             self._websocket_connector.write_message({
-                                "type": BackendMessageType.ClaudeCodeStatusChange,
+                                "type": BackendMessageType.ClaudeCodeHeartbeat,
                                 "data": {}
                             })
                             last_heartbeat = current_time
                             log.debug(f"Heartbeat sent after {int(current_time - start_time)}s")
                         except Exception as e:
+                            last_heartbeat = current_time
                             log.warning(f"Failed to send heartbeat: {e}")
                 time.sleep(CLAUDE_AGENT_CLIENT_RESPONSE_WAIT_TIME)
         finally:

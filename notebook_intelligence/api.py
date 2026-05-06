@@ -33,6 +33,7 @@ class BackendMessageType(str, Enum):
     GitHubCopilotLoginStatusChange = 'github-copilot-login-status-change'
     MCPServerStatusChange = 'mcp-server-status-change'
     ClaudeCodeStatusChange = 'claude-code-status-change'
+    ClaudeCodeHeartbeat = 'claude-code-heartbeat'
     SkillsReloaded = 'skills-reloaded'
 
 class ResponseStreamDataType(str, Enum):

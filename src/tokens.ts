@@ -35,6 +35,7 @@ export enum BackendMessageType {
   GitHubCopilotLoginStatusChange = 'github-copilot-login-status-change',
   MCPServerStatusChange = 'mcp-server-status-change',
   ClaudeCodeStatusChange = 'claude-code-status-change',
+  ClaudeCodeHeartbeat = 'claude-code-heartbeat',
   SkillsReloaded = 'skills-reloaded'
 }
 

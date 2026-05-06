@@ -227,7 +227,7 @@ class TestSendClaudeAgentRequestHeartbeat:
 
         connector.write_message.assert_called_once()
         assert connector.write_message.call_args[0][0] == {
-            "type": "claude-code-status-change",
+            "type": "claude-code-heartbeat",
             "data": {},
         }
 
