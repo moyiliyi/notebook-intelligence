@@ -295,6 +295,8 @@ pre:has(.code-block-header) {
 
 .loading-ellipsis::after {
   display: inline-block;
+  width: 1.5ch;
+  text-align: left;
   animation: animated-ellipsis steps(1, end) 1s infinite;
   content: '';
 }
