@@ -6,6 +6,8 @@ import { CodeEditor } from '@jupyterlab/codeeditor';
 import { encoding_for_model } from 'tiktoken';
 import { NotebookPanel } from '@jupyterlab/notebook';
 
+import type { IClaudeSessionInfo } from './api';
+
 const tiktoken_encoding = encoding_for_model('gpt-4o');
 
 export function removeAnsiChars(str: string): string {
@@ -283,6 +285,27 @@ export function applyCodeToSelectionInEditor(
  */
 export function shellSingleQuote(value: string): string {
   return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+/**
+ * Filter the unified session list down to entries whose transcript file
+ * lives in `sessionsDir`. The chat sidebar uses this to scope its popover
+ * to the current Jupyter cwd; the launcher tile shows everything.
+ */
+export function filterSessionsToDir(
+  sessions: IClaudeSessionInfo[],
+  sessionsDir: string
+): IClaudeSessionInfo[] {
+  if (!sessionsDir) {
+    return sessions;
+  }
+  // Exact-parent match: transcripts live directly in the encoded dir,
+  // never nested deeper. The trailing slash prevents "/foo" matching
+  // "/foobar/x.jsonl".
+  const prefix = sessionsDir + '/';
+  return sessions.filter(
+    s => s.path.startsWith(prefix) && !s.path.slice(prefix.length).includes('/')
+  );
 }
 
 /**

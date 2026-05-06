@@ -1104,6 +1104,8 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
       label: 'Claude Code',
       caption: 'Resume or start a Claude Code session',
       icon: claudeIcon,
+      isVisible: () =>
+        NBIAPI.config.isInClaudeCodeMode && NBIAPI.config.isClaudeCliAvailable,
       execute: async () => {
         class PickerWidget extends ReactWidget {
           getValue(): void {
@@ -1147,6 +1149,13 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         rank: -1
       });
     }
+
+    // Refresh the launcher tile's enabled/visible state when the user
+    // toggles Claude Code mode or installs the CLI. Without this, the
+    // tile keeps its initial-load decision until full reload.
+    NBIAPI.configChanged.connect(() => {
+      app.commands.notifyCommandChanged(CommandIDs.openClaudeCodeLauncher);
+    });
 
     const isNewEmptyNotebook = (model: ISharedNotebook) => {
       return (

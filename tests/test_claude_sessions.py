@@ -6,9 +6,10 @@ import pytest
 
 from notebook_intelligence.claude_sessions import (
     ClaudeSessionInfo,
+    _CONTROL_SLASH_COMMANDS,
     encode_cwd,
     get_sessions_dir,
-    list_sessions,
+    _list_sessions_in_dir,
     list_all_sessions,
 )
 
@@ -32,15 +33,6 @@ def _sidechain_line(session_id: str, content: str = "Warmup") -> dict:
     return {
         "type": "user",
         "isSidechain": True,
-        "message": {"role": "user", "content": content},
-        "sessionId": session_id,
-    }
-
-
-def _preamble_line(session_id: str, content) -> dict:
-    """User-message envelope for synthetic preambles (NBI / Claude Code)."""
-    return {
-        "type": "user",
         "message": {"role": "user", "content": content},
         "sessionId": session_id,
     }
@@ -104,7 +96,7 @@ class TestListSessions:
     def test_returns_empty_when_dir_missing(
         self, fake_claude_home, project_cwd
     ):
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result == []
 
     def test_returns_empty_when_dir_has_no_jsonl_files(
@@ -114,7 +106,7 @@ class TestListSessions:
         (sessions_dir / "notes.txt").write_text("hi")
         (sessions_dir / "subagents").mkdir()
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result == []
 
     def test_lists_sessions_with_metadata(
@@ -131,7 +123,7 @@ class TestListSessions:
             ],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
 
         assert len(result) == 1
         session = result[0]
@@ -152,7 +144,7 @@ class TestListSessions:
         os.utime(older_path, (1_000_000_000, 1_000_000_000))
         os.utime(newer_path, (2_000_000_000, 2_000_000_000))
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
 
         assert [s.session_id for s in result] == ["newer", "older"]
 
@@ -167,7 +159,7 @@ class TestListSessions:
             [{"type": "file-history-snapshot", "messageId": "x", "snapshot": {}}],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result == []
 
     def test_ignores_nested_subagent_files(
@@ -184,7 +176,7 @@ class TestListSessions:
             nested / "agent-xyz.jsonl", [_user_line("sub", "sub prompt")]
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert [s.session_id for s in result] == ["main"]
 
     def test_skips_top_level_sidechain_files(
@@ -203,7 +195,7 @@ class TestListSessions:
             [_sidechain_line("real-session")],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert [s.session_id for s in result] == ["real-session"]
 
     def test_sidechain_filter_skips_corrupt_first_line(
@@ -217,7 +209,7 @@ class TestListSessions:
             fh.write("{ broken\n")
             fh.write(json.dumps(_sidechain_line("real-session")) + "\n")
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result == []
 
     def test_keeps_files_when_isSidechain_is_false(
@@ -233,7 +225,7 @@ class TestListSessions:
         }
         _write_jsonl(sessions_dir / "real.jsonl", [line])
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert [s.session_id for s in result] == ["real"]
 
     def test_skips_nbi_context_preamble_when_extracting_preview(
@@ -242,7 +234,7 @@ class TestListSessions:
         # NBI prepends an "Additional context: ..." user message before the
         # real prompt; the preview should reflect the user's intent, not the
         # boilerplate.
-        preamble = _preamble_line(
+        preamble = _user_line(
             "real",
             "Additional context: Current directory open in Jupyter is: "
             "'/tmp/proj' and current file is: 'foo.ipynb'",
@@ -250,7 +242,7 @@ class TestListSessions:
         real_prompt = _user_line("real", "Implement fizzbuzz in a new cell")
         _write_jsonl(sessions_dir / "real.jsonl", [preamble, real_prompt])
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert len(result) == 1
         assert result[0].preview == "Implement fizzbuzz in a new cell"
 
@@ -258,7 +250,7 @@ class TestListSessions:
         self, sessions_dir, fake_claude_home, project_cwd
     ):
         # Same shape, but the preamble arrives as a list of content blocks.
-        preamble = _preamble_line(
+        preamble = _user_line(
             "real",
             [
                 {
@@ -273,7 +265,7 @@ class TestListSessions:
         real_prompt = _user_line("real", "Hello world")
         _write_jsonl(sessions_dir / "real.jsonl", [preamble, real_prompt])
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert [s.preview for s in result] == ["Hello world"]
 
     def test_falls_back_to_no_preview_when_only_preamble(
@@ -281,12 +273,12 @@ class TestListSessions:
     ):
         # Pure-preamble file (e.g. session created but no real prompt yet)
         # should be filtered out — no preview to show.
-        preamble = _preamble_line(
+        preamble = _user_line(
             "real", "Additional context: Current directory open in Jupyter is: ''"
         )
         _write_jsonl(sessions_dir / "real.jsonl", [preamble])
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result == []
 
     def test_skips_claude_code_command_envelopes(
@@ -296,21 +288,21 @@ class TestListSessions:
         # messages: <local-command-caveat>, <command-name>, <local-command-
         # stdout>. None of these are real user prompts.
         envelopes = [
-            _preamble_line(
+            _user_line(
                 "real",
                 "<local-command-caveat>Caveat: The messages below were "
                 "generated by the user while running local commands."
                 "</local-command-caveat>",
             ),
-            _preamble_line("real", "<command-name>/clear</command-name>"),
-            _preamble_line(
+            _user_line("real", "<command-name>/clear</command-name>"),
+            _user_line(
                 "real", "<local-command-stdout>Bye!</local-command-stdout>"
             ),
         ]
         real_prompt = _user_line("real", "Tell me about pandas")
         _write_jsonl(sessions_dir / "real.jsonl", envelopes + [real_prompt])
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert [s.preview for s in result] == ["Tell me about pandas"]
 
     def test_tolerates_partial_trailing_line(
@@ -325,7 +317,7 @@ class TestListSessions:
             fh.write(json.dumps(_user_line("partial", "first message")) + "\n")
             fh.write('{"type": "user", "message": {"role": "user", "content')
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert len(result) == 1
         assert result[0].preview == "first message"
 
@@ -338,7 +330,7 @@ class TestListSessions:
             [_user_line("long", long_text)],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert len(result[0].preview) < len(long_text)
         assert result[0].preview.endswith("\u2026")
 
@@ -350,7 +342,7 @@ class TestListSessions:
             [_user_line("ws", "line one\n\n   line two\tthree")],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result[0].preview == "line one line two three"
 
     def test_handles_structured_content_blocks(
@@ -373,8 +365,84 @@ class TestListSessions:
             ],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result[0].preview == "hello world"
+
+    @pytest.mark.parametrize(
+        "first_line, expected_preview",
+        [
+            # Claude Code injects "[Request interrupted by user...]" markers
+            # when the user cancels mid-tool-call.
+            ("[Request interrupted by user for tool use]", "real prompt"),
+            # claude-agent-sdk echoes "Unknown slash command: <name>" when a
+            # CLI-only slash command reaches it (e.g. /clear).
+            ("Unknown slash command: clear", "real prompt"),
+            # Bare slash verbs (/exit, /clear, /quit, /help) don't describe
+            # the session.
+            ("/exit", "real prompt"),
+            # ...but slash commands WITH args carry real intent — only bare
+            # verbs are skipped.
+            ("/explain how this works", "/explain how this works"),
+            # Empty / whitespace-only first messages aren't useful previews.
+            ("   \n\t  ", "real prompt"),
+        ],
+        ids=[
+            "request_interrupted",
+            "unknown_slash_echo",
+            "bare_slash",
+            "slash_with_args",
+            "whitespace_only",
+        ],
+    )
+    def test_skip_filter_picks_meaningful_first_message(
+        self,
+        sessions_dir,
+        fake_claude_home,
+        project_cwd,
+        first_line,
+        expected_preview,
+    ):
+        _write_jsonl(
+            sessions_dir / "session.jsonl",
+            [
+                _user_line("session", first_line),
+                _user_line("session", "real prompt"),
+            ],
+        )
+
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
+        assert result[0].preview == expected_preview
+
+    @pytest.mark.parametrize("verb", sorted(_CONTROL_SLASH_COMMANDS))
+    def test_every_control_slash_command_is_skipped(
+        self, sessions_dir, fake_claude_home, project_cwd, verb
+    ):
+        # Pin every entry in _CONTROL_SLASH_COMMANDS so a typo or accidental
+        # removal in the constant fails this test loudly.
+        _write_jsonl(
+            sessions_dir / "verb.jsonl",
+            [
+                _user_line("verb", verb),
+                _user_line("verb", "real prompt"),
+            ],
+        )
+
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
+        assert result[0].preview == "real prompt"
+
+    def test_bare_slash_verb_not_in_allowlist_is_kept(
+        self, sessions_dir, fake_claude_home, project_cwd
+    ):
+        # The allowlist is intentionally narrow — only known control verbs
+        # are skipped. A bare unknown slash word (e.g. "/explain", "/voice")
+        # is treated as the user's intent and surfaced as the preview.
+        _write_jsonl(
+            sessions_dir / "unknown.jsonl",
+            [_user_line("unknown", "/explain")],
+        )
+
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
+        assert result[0].preview == "/explain"
 
     def test_skips_tool_result_user_envelopes(
         self, sessions_dir, fake_claude_home, project_cwd
@@ -402,7 +470,7 @@ class TestListSessions:
             ],
         )
 
-        result = list_sessions(project_cwd, claude_home=str(fake_claude_home))
+        result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert result[0].preview == "actual prompt"
 
 
@@ -413,6 +481,10 @@ def _history_line(session_id: str, project: str, ts: int, display: str) -> dict:
         "timestamp": ts,
         "display": display,
     }
+
+
+def _write_history(home: Path, lines: list[dict]) -> None:
+    _write_jsonl(home / "history.jsonl", lines)
 
 
 class TestListAllSessions:
@@ -435,16 +507,12 @@ class TestListAllSessions:
         self, fake_claude_home, sessions_dir, project_cwd
     ):
         # history.jsonl has session "hist-only"
-        history_path = fake_claude_home / "history.jsonl"
         hist_jsonl = sessions_dir / "hist-only.jsonl"
         _write_jsonl(hist_jsonl, [_user_line("hist-only", "from history")])
-        with history_path.open("w") as fh:
-            fh.write(
-                json.dumps(
-                    _history_line("hist-only", project_cwd, 2_000_000_000_000, "from history")
-                )
-                + "\n"
-            )
+        _write_history(
+            fake_claude_home,
+            [_history_line("hist-only", project_cwd, 2_000_000_000_000, "from history")],
+        )
 
         # cwd dir also has "nbi-only" which is not in history.jsonl
         _write_jsonl(
@@ -456,6 +524,77 @@ class TestListAllSessions:
         assert "hist-only" in ids
         assert "nbi-only" in ids
 
+    def test_falls_back_to_transcript_when_history_display_is_skippable(
+        self, fake_claude_home, sessions_dir, project_cwd
+    ):
+        # history.jsonl carries "/exit" as the first display for this
+        # session, but the transcript has the user's real prompt earlier
+        # in the same conversation. Both pickers should converge on the
+        # real prompt — that's the whole point of issue #181.
+        session_id = "abc12345"
+        jsonl_path = sessions_dir / f"{session_id}.jsonl"
+        _write_jsonl(
+            jsonl_path,
+            [
+                _user_line(session_id, "Plot the closing prices for AAPL"),
+                _assistant_line(session_id),
+                _user_line(session_id, "/exit"),
+            ],
+        )
+
+        _write_history(
+            fake_claude_home,
+            [_history_line(session_id, project_cwd, 1_700_000_000_000, "/exit")],
+        )
+
+        result = list_all_sessions(cwd=project_cwd, claude_home=str(fake_claude_home))
+        match = next(s for s in result if s.session_id == session_id)
+        assert match.preview == "Plot the closing prices for AAPL"
+
+    def test_keeps_skippable_display_when_transcript_has_nothing_better(
+        self, fake_claude_home, sessions_dir, project_cwd
+    ):
+        # Session whose display AND transcript are both skippable should
+        # still appear in the picker — we'd rather show "/exit" than drop
+        # a resumable session entirely.
+        session_id = "barren12"
+        jsonl_path = sessions_dir / f"{session_id}.jsonl"
+        _write_jsonl(jsonl_path, [_user_line(session_id, "/clear")])
+        _write_history(
+            fake_claude_home,
+            [_history_line(session_id, project_cwd, 1_700_000_000_000, "/exit")],
+        )
+
+        result = list_all_sessions(cwd=project_cwd, claude_home=str(fake_claude_home))
+        match = next(s for s in result if s.session_id == session_id)
+        assert match.preview == "/exit"
+
+    def test_keeps_history_display_when_meaningful(
+        self, fake_claude_home, sessions_dir, project_cwd
+    ):
+        # When history.jsonl already has a meaningful display, the
+        # transcript fall-through must not run (and even if it did, the
+        # display value should win — it's what the user actually typed).
+        session_id = "good1234"
+        jsonl_path = sessions_dir / f"{session_id}.jsonl"
+        _write_jsonl(
+            jsonl_path,
+            [_user_line(session_id, "transcript-recorded text")],
+        )
+
+        _write_history(
+            fake_claude_home,
+            [
+                _history_line(
+                    session_id, project_cwd, 1_700_000_000_000, "what the user typed"
+                )
+            ],
+        )
+
+        result = list_all_sessions(cwd=project_cwd, claude_home=str(fake_claude_home))
+        match = next(s for s in result if s.session_id == session_id)
+        assert match.preview == "what the user typed"
+
     def test_deduplicates_sessions_in_both_sources(
         self, fake_claude_home, sessions_dir, project_cwd
     ):
@@ -463,14 +602,64 @@ class TestListAllSessions:
         jsonl_path = sessions_dir / f"{session_id}.jsonl"
         _write_jsonl(jsonl_path, [_user_line(session_id, "shared session")])
 
-        history_path = fake_claude_home / "history.jsonl"
-        with history_path.open("w") as fh:
-            fh.write(
-                json.dumps(
-                    _history_line(session_id, project_cwd, 1_000_000_000_000, "shared session")
-                )
-                + "\n"
-            )
+        _write_history(
+            fake_claude_home,
+            [_history_line(session_id, project_cwd, 1_000_000_000_000, "shared session")],
+        )
 
         result = list_all_sessions(cwd=project_cwd, claude_home=str(fake_claude_home))
         assert len([s for s in result if s.session_id == session_id]) == 1
+
+    @pytest.mark.parametrize(
+        "skippable_display",
+        [
+            "Additional context: Current directory open in Jupyter is: '/x'",
+            "<local-command-caveat>Caveat: ...</local-command-caveat>",
+            "<command-name>/clear</command-name>",
+            "[Request interrupted by user for tool use]",
+            "Unknown slash command: clear",
+            "/exit",
+        ],
+        ids=[
+            "nbi_context_preamble",
+            "local_command_envelope",
+            "command_envelope",
+            "request_interrupted",
+            "unknown_slash_echo",
+            "control_verb",
+        ],
+    )
+    def test_chat_picker_and_launcher_show_same_preview_for_issue_181(
+        self, fake_claude_home, sessions_dir, project_cwd, skippable_display
+    ):
+        # Reproduces issue #181: same session id, two pickers, different
+        # previews. Both pickers must converge on the same string when the
+        # session's history.jsonl display falls into ANY skip category.
+        session_id = "issue181"
+        jsonl_path = sessions_dir / f"{session_id}.jsonl"
+        _write_jsonl(
+            jsonl_path,
+            [
+                _user_line(session_id, "Plot the closing prices for AAPL"),
+                _assistant_line(session_id),
+                _user_line(session_id, skippable_display),
+            ],
+        )
+        _write_history(
+            fake_claude_home,
+            [_history_line(session_id, project_cwd, 1_700_000_000_000, skippable_display)],
+        )
+
+        chat_picker_session = next(
+            s
+            for s in _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
+            if s.session_id == session_id
+        )
+        launcher_session = next(
+            s
+            for s in list_all_sessions(cwd=project_cwd, claude_home=str(fake_claude_home))
+            if s.session_id == session_id
+        )
+
+        assert chat_picker_session.preview == launcher_session.preview
+        assert chat_picker_session.preview == "Plot the closing prices for AAPL"

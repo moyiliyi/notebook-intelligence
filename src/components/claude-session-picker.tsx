@@ -10,7 +10,11 @@ import React, {
 import { VscCheck, VscClose, VscCopy, VscHistory } from 'react-icons/vsc';
 
 import { IClaudeSessionInfo, IClaudeSessionList, NBIAPI } from '../api';
-import { buildResumeCommand, writeTextToClipboard } from '../utils';
+import {
+  buildResumeCommand,
+  filterSessionsToDir,
+  writeTextToClipboard
+} from '../utils';
 
 export interface IClaudeSessionPickerProps {
   onResume: (session: IClaudeSessionInfo) => void;
@@ -39,7 +43,7 @@ export function ClaudeSessionPicker(
   props: IClaudeSessionPickerProps
 ): JSX.Element {
   const [sessions, setSessions] = useState<IClaudeSessionInfo[]>([]);
-  const [cwd, setCwd] = useState('');
+  const [currentCwd, setCurrentCwd] = useState('');
   const [loading, setLoading] = useState(true);
   const [resuming, setResuming] = useState(false);
   const [error, setError] = useState('');
@@ -65,8 +69,10 @@ export function ClaudeSessionPicker(
         if (cancelled) {
           return;
         }
-        setSessions(result.sessions);
-        setCwd(result.cwd);
+        setSessions(
+          filterSessionsToDir(result.sessions, result.currentSessionsDir)
+        );
+        setCurrentCwd(result.currentCwd);
         setLoading(false);
       })
       .catch(reason => {
@@ -88,7 +94,7 @@ export function ClaudeSessionPicker(
     event.stopPropagation();
     event.preventDefault();
     const ok = await writeTextToClipboard(
-      buildResumeCommand(cwd, session.session_id)
+      buildResumeCommand(currentCwd, session.session_id)
     );
     setCopyFeedback({
       sessionId: session.session_id,

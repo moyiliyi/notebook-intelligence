@@ -16,9 +16,9 @@ export function LauncherPicker({
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    NBIAPI.listAllClaudeSessions()
+    NBIAPI.listClaudeSessions()
       .then(result => {
-        setSessions(result);
+        setSessions(result.sessions);
         setLoading(false);
       })
       .catch((reason: any) => {
@@ -91,9 +91,7 @@ export function LauncherPicker({
               </div>
               {session.preview && (
                 <div className="nbi-claude-code-picker-msg">
-                  {session.preview.length > 80
-                    ? session.preview.slice(0, 80) + '…'
-                    : session.preview}
+                  {session.preview}
                 </div>
               )}
             </div>

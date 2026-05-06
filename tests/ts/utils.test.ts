@@ -13,9 +13,11 @@ import {
   cellOutputAsText,
   applyCodeToSelectionInEditor,
   buildResumeCommand,
+  filterSessionsToDir,
   shellSingleQuote,
   writeTextToClipboard
 } from '../../src/utils';
+import type { IClaudeSessionInfo } from '../../src/api';
 
 describe('removeAnsiChars', () => {
   it('strips colour escape sequences', () => {
@@ -467,5 +469,64 @@ describe('buildResumeCommand', () => {
 
   it('falls back to a bare resume when cwd is empty', () => {
     expect(buildResumeCommand('', 'abc-123')).toBe('claude --resume abc-123');
+  });
+});
+
+describe('filterSessionsToDir', () => {
+  const session = (id: string, path: string): IClaudeSessionInfo => ({
+    session_id: id,
+    path,
+    modified_at: 0,
+    created_at: 0,
+    preview: '',
+    cwd: ''
+  });
+
+  it('keeps only sessions whose transcript lives directly in the dir', () => {
+    const dir = '/home/u/.claude/projects/-Users-me-proj';
+    const sessions = [
+      session('a', `${dir}/a.jsonl`),
+      session('b', '/home/u/.claude/projects/-Users-me-other/b.jsonl'),
+      session('c', `${dir}/c.jsonl`)
+    ];
+
+    expect(filterSessionsToDir(sessions, dir).map(s => s.session_id)).toEqual([
+      'a',
+      'c'
+    ]);
+  });
+
+  it('returns the input unchanged when sessionsDir is empty', () => {
+    const sessions = [session('a', '/anywhere/a.jsonl')];
+    expect(filterSessionsToDir(sessions, '')).toBe(sessions);
+  });
+
+  it('excludes sessions nested deeper than the target dir', () => {
+    const dir = '/p';
+    const sessions = [
+      session('a', '/p/sub/a.jsonl'),
+      session('b', '/p/b.jsonl')
+    ];
+    expect(filterSessionsToDir(sessions, dir).map(s => s.session_id)).toEqual([
+      'b'
+    ]);
+  });
+
+  it('returns an empty array when no session matches the dir', () => {
+    const sessions = [session('a', '/x/a.jsonl'), session('b', '/y/b.jsonl')];
+    expect(filterSessionsToDir(sessions, '/z')).toEqual([]);
+  });
+
+  it('does not match a sibling dir that shares a prefix', () => {
+    // The trailing-slash guard prevents "/p" from matching
+    // "/p-other/x.jsonl" — without it, encoded-cwd directories that share
+    // a prefix would silently leak into one another's session lists.
+    const sessions = [
+      session('a', '/p/a.jsonl'),
+      session('b', '/p-other/b.jsonl')
+    ];
+    expect(filterSessionsToDir(sessions, '/p').map(s => s.session_id)).toEqual([
+      'a'
+    ]);
   });
 });

@@ -51,10 +51,14 @@ export interface IClaudeSessionInfo {
 
 export interface IClaudeSessionList {
   sessions: IClaudeSessionInfo[];
-  // The realpath-resolved JupyterLab working directory the sessions live
-  // under. `claude --resume <id>` is cwd-scoped, so the frontend pairs this
-  // with the session id to produce a copyable shell command.
-  cwd: string;
+  // The realpath-resolved JupyterLab working directory. `claude --resume
+  // <id>` is cwd-scoped, so the frontend pairs this with the session id to
+  // produce a copyable shell command.
+  currentCwd: string;
+  // The realpath-encoded sessions directory for ``current_cwd``. The chat
+  // sidebar filters the full session list down to entries whose transcript
+  // path is under this directory; the launcher tile shows everything.
+  currentSessionsDir: string;
 }
 
 export enum ClaudeToolType {
@@ -274,6 +278,10 @@ export class NBIConfig {
 
   get isInClaudeCodeMode(): boolean {
     return this.claudeSettings.enabled === true;
+  }
+
+  get isClaudeCliAvailable(): boolean {
+    return this.capabilities.claude_cli_available === true;
   }
 
   get chatFeedbackEnabled(): boolean {
@@ -960,26 +968,22 @@ export class NBIAPI {
   }
 
   static async listClaudeSessions(): Promise<IClaudeSessionList> {
+    interface IWireResponse {
+      sessions?: IClaudeSessionInfo[];
+      current_cwd?: string;
+      current_sessions_dir?: string;
+    }
     return new Promise<IClaudeSessionList>((resolve, reject) => {
-      requestAPI<any>('claude-sessions', { method: 'GET' })
+      requestAPI<IWireResponse>('claude-sessions', { method: 'GET' })
         .then(data => {
-          resolve({ sessions: data.sessions ?? [], cwd: data.cwd ?? '' });
+          resolve({
+            sessions: data.sessions ?? [],
+            currentCwd: data.current_cwd ?? '',
+            currentSessionsDir: data.current_sessions_dir ?? ''
+          });
         })
         .catch(reason => {
           console.error(`Failed to list Claude sessions.\n${reason}`);
-          reject(reason);
-        });
-    });
-  }
-
-  static async listAllClaudeSessions(): Promise<IClaudeSessionInfo[]> {
-    return new Promise<IClaudeSessionInfo[]>((resolve, reject) => {
-      requestAPI<any>('claude-sessions/all', { method: 'GET' })
-        .then(data => {
-          resolve(data.sessions ?? []);
-        })
-        .catch(reason => {
-          console.error(`Failed to list all Claude sessions.\n${reason}`);
           reject(reason);
         });
     });

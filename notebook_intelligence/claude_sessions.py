@@ -41,15 +41,39 @@ _PREVIEW_MAX_CHARS = 160
 # prompt is on the first few lines.
 _MAX_LINES_SCANNED = 200
 
-# Synthetic user-message preambles that should be skipped when picking a
-# preview. NBI prepends a context line (see NBI_CONTEXT_PREFIX) and Claude
-# Code wraps slash-command output in <local-command-...> and <command-...>
-# envelopes; neither reflects what the user actually typed.
+# Skip filter shared by the chat-sidebar picker and the launcher tile so
+# they can't disagree on what to show for the same session id. New
+# patterns spotted in the wild (e.g. "Unknown skill:") are tracked in
+# issue #186.
 NBI_CONTEXT_PREFIX = "Additional context: Current directory open in Jupyter is:"
-# The envelope match is intentionally broad. A user prompt that genuinely
-# starts with one of these tag prefixes (e.g. "what does <command-name> do?")
-# would be skipped in favor of the next message — acceptable trade-off.
-_CLAUDE_ENVELOPE_PREFIXES = ("<local-command-", "<command-")
+# A user prompt that genuinely starts with one of these prefixes (e.g.
+# "what does <command-name> do?") would be skipped in favor of the next
+# message — acceptable trade-off.
+_SKIPPABLE_PREFIXES = (
+    NBI_CONTEXT_PREFIX,
+    "<local-command-",
+    "<command-",
+    "[Request interrupted by user",
+    "Unknown slash command:",
+)
+# Control-only slash commands the user typed to manage the session itself
+# rather than ask Claude something. A regex like ^/[A-Za-z]+$ would also
+# match "/tmp" or "/etc" — common file paths someone might paste — so we
+# enumerate the known set instead.
+_CONTROL_SLASH_COMMANDS = frozenset({
+    "/clear",
+    "/compact",
+    "/cost",
+    "/exit",
+    "/help",
+    "/init",
+    "/login",
+    "/logout",
+    "/quit",
+    "/release-notes",
+    "/reset",
+    "/status",
+})
 
 
 @dataclass
@@ -88,7 +112,7 @@ def get_sessions_dir(cwd: str, claude_home: Optional[str] = None) -> Path:
     return home / "projects" / encode_cwd(cwd)
 
 
-def list_sessions(
+def _list_sessions_in_dir(
     cwd: str,
     claude_home: Optional[str] = None,
 ) -> list[ClaudeSessionInfo]:
@@ -150,7 +174,7 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
                         return None
                 if not _is_user_message(obj):
                     continue
-                if _is_synthetic_preamble(obj):
+                if _is_skippable_user_message(obj):
                     continue
                 preview = _extract_preview(obj)
                 break
@@ -190,22 +214,25 @@ def _is_user_message(obj: dict) -> bool:
     return False
 
 
-def _is_synthetic_preamble(obj: dict) -> bool:
+def _is_skippable_user_message(obj: dict) -> bool:
     content = obj.get("message", {}).get("content")
     if isinstance(content, str):
-        return _looks_synthetic(content)
+        return _is_skippable_text(content)
     if isinstance(content, list):
         for block in content:
             if isinstance(block, dict) and block.get("type") == "text":
                 text = block.get("text", "")
-                return isinstance(text, str) and _looks_synthetic(text)
+                return isinstance(text, str) and _is_skippable_text(text)
     return False
 
 
-def _looks_synthetic(text: str) -> bool:
-    if text.startswith(NBI_CONTEXT_PREFIX):
+def _is_skippable_text(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
         return True
-    return text.startswith(_CLAUDE_ENVELOPE_PREFIXES)
+    if stripped.startswith(_SKIPPABLE_PREFIXES):
+        return True
+    return stripped in _CONTROL_SLASH_COMMANDS
 
 
 def _extract_preview(obj: dict) -> str:
@@ -225,8 +252,12 @@ def _extract_preview(obj: dict) -> str:
 
     # Collapse whitespace so multi-line prompts render as a single row.
     text = " ".join(text.split())
+    return _truncate_preview(text)
+
+
+def _truncate_preview(text: str) -> str:
     if len(text) > _PREVIEW_MAX_CHARS:
-        text = text[: _PREVIEW_MAX_CHARS - 1].rstrip() + "\u2026"
+        return text[: _PREVIEW_MAX_CHARS - 1].rstrip() + "\u2026"
     return text
 
 
@@ -254,7 +285,7 @@ def list_all_sessions(
 
     if not history_path.exists():
         if cwd:
-            sessions = list_sessions(cwd, claude_home=claude_home)
+            sessions = _list_sessions_in_dir(cwd, claude_home=claude_home)
             for s in sessions:
                 s.cwd = cwd
             return sessions
@@ -305,7 +336,7 @@ def list_all_sessions(
     except OSError as exc:
         log.warning("Could not read Claude history file %s: %s", history_path, exc)
         if cwd:
-            sessions = list_sessions(cwd, claude_home=claude_home)
+            sessions = _list_sessions_in_dir(cwd, claude_home=claude_home)
             for s in sessions:
                 s.cwd = cwd
             return sessions
@@ -322,8 +353,13 @@ def list_all_sessions(
         except OSError:
             continue
         preview = data["preview"]
-        if len(preview) > _PREVIEW_MAX_CHARS:
-            preview = preview[: _PREVIEW_MAX_CHARS - 1].rstrip() + "\u2026"
+        # Fall back to a transcript scan when display is skippable so
+        # both pickers converge on the same preview (issue #181).
+        if _is_skippable_text(preview):
+            transcript_info = _read_session_info(jsonl_path)
+            if transcript_info is not None and transcript_info.preview:
+                preview = transcript_info.preview
+        preview = _truncate_preview(preview)
         sessions.append(ClaudeSessionInfo(
             session_id=session_id,
             path=str(jsonl_path),
@@ -337,7 +373,7 @@ def list_all_sessions(
     # not appear in history.jsonl), deduplicating by session_id.
     if cwd:
         existing_ids = {s.session_id for s in sessions}
-        for s in list_sessions(cwd, claude_home=claude_home):
+        for s in _list_sessions_in_dir(cwd, claude_home=claude_home):
             if s.session_id not in existing_ids:
                 s.cwd = cwd
                 sessions.append(s)
