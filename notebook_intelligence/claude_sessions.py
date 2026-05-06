@@ -41,6 +41,16 @@ _PREVIEW_MAX_CHARS = 160
 # prompt is on the first few lines.
 _MAX_LINES_SCANNED = 200
 
+# Synthetic user-message preambles that should be skipped when picking a
+# preview. NBI prepends a context line (see NBI_CONTEXT_PREFIX) and Claude
+# Code wraps slash-command output in <local-command-...> and <command-...>
+# envelopes; neither reflects what the user actually typed.
+NBI_CONTEXT_PREFIX = "Additional context: Current directory open in Jupyter is:"
+# The envelope match is intentionally broad. A user prompt that genuinely
+# starts with one of these tag prefixes (e.g. "what does <command-name> do?")
+# would be skipped in favor of the next message — acceptable trade-off.
+_CLAUDE_ENVELOPE_PREFIXES = ("<local-command-", "<command-")
+
 
 @dataclass
 class ClaudeSessionInfo:
@@ -140,6 +150,8 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
                         return None
                 if not _is_user_message(obj):
                     continue
+                if _is_synthetic_preamble(obj):
+                    continue
                 preview = _extract_preview(obj)
                 break
     except OSError as exc:
@@ -176,6 +188,24 @@ def _is_user_message(obj: dict) -> bool:
             for block in content
         )
     return False
+
+
+def _is_synthetic_preamble(obj: dict) -> bool:
+    content = obj.get("message", {}).get("content")
+    if isinstance(content, str):
+        return _looks_synthetic(content)
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                return isinstance(text, str) and _looks_synthetic(text)
+    return False
+
+
+def _looks_synthetic(text: str) -> bool:
+    if text.startswith(NBI_CONTEXT_PREFIX):
+        return True
+    return text.startswith(_CLAUDE_ENVELOPE_PREFIXES)
 
 
 def _extract_preview(obj: dict) -> str:
