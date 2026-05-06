@@ -37,22 +37,22 @@ export function LauncherPicker({
 
   if (loading) {
     return (
-      <div className="nflx-claude-code-picker-status">
+      <div className="nbi-claude-code-picker-status">
         Loading sessions&#8230;
       </div>
     );
   }
   if (error) {
     return (
-      <div className="nflx-claude-code-picker-status nflx-claude-code-picker-error">
+      <div className="nbi-claude-code-picker-status nbi-claude-code-picker-error">
         {error}
       </div>
     );
   }
   return (
-    <div className="nflx-claude-code-picker-body">
+    <div className="nbi-claude-code-picker-body">
       <input
-        className="nflx-claude-code-picker-search"
+        className="nbi-claude-code-picker-search"
         type="text"
         placeholder="Filter sessions..."
         value={filter}
@@ -61,9 +61,9 @@ export function LauncherPicker({
         }
         autoFocus
       />
-      <div className="nflx-claude-code-picker-list">
+      <div className="nbi-claude-code-picker-list">
         {filtered.length === 0 ? (
-          <div className="nflx-claude-code-picker-empty">
+          <div className="nbi-claude-code-picker-empty">
             {filter
               ? 'No sessions match your filter.'
               : 'No previous sessions found.'}
@@ -72,7 +72,7 @@ export function LauncherPicker({
           filtered.map(session => (
             <div
               key={session.session_id}
-              className="nflx-claude-code-picker-session"
+              className="nbi-claude-code-picker-session"
               tabIndex={0}
               onClick={() => onSessionSelected(session)}
               onKeyPress={(e: KeyboardEvent) => {
@@ -81,16 +81,16 @@ export function LauncherPicker({
                 }
               }}
             >
-              <div className="nflx-claude-code-picker-session-top">
-                <span className="nflx-claude-code-picker-session-id">
+              <div className="nbi-claude-code-picker-session-top">
+                <span className="nbi-claude-code-picker-session-id">
                   {session.session_id.slice(0, 8)}
                 </span>
-                <span className="nflx-claude-code-picker-time">
+                <span className="nbi-claude-code-picker-time">
                   {session.cwd}
                 </span>
               </div>
               {session.preview && (
-                <div className="nflx-claude-code-picker-msg">
+                <div className="nbi-claude-code-picker-msg">
                   {session.preview.length > 80
                     ? session.preview.slice(0, 80) + '…'
                     : session.preview}

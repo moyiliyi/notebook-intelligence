@@ -709,17 +709,17 @@ pre:has(.code-block-header) {
 }
 
 /* Claude Code session picker (used inside Dialog from launcher tile) */
-.nflx-claude-code-picker {
+.nbi-claude-code-picker {
   min-width: 480px;
 }
 
-.nflx-claude-code-picker-body {
+.nbi-claude-code-picker-body {
   display: flex;
   flex-direction: column;
   gap: 0;
 }
 
-.nflx-claude-code-picker-search {
+.nbi-claude-code-picker-search {
   width: 100%;
   box-sizing: border-box;
   padding: 7px 10px;
@@ -731,12 +731,12 @@ pre:has(.code-block-header) {
   font-size: var(--jp-ui-font-size1);
 }
 
-.nflx-claude-code-picker-list {
+.nbi-claude-code-picker-list {
   max-height: 380px;
   overflow-y: auto;
 }
 
-.nflx-claude-code-picker-status {
+.nbi-claude-code-picker-status {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -744,22 +744,22 @@ pre:has(.code-block-header) {
   color: var(--jp-ui-font-color2);
 }
 
-.nflx-claude-code-picker-error {
+.nbi-claude-code-picker-error {
   color: var(--jp-error-color1);
 }
 
-.nflx-claude-code-picker-empty {
+.nbi-claude-code-picker-empty {
   padding: 16px 0;
   color: var(--jp-ui-font-color2);
   text-align: center;
   font-size: var(--jp-ui-font-size1);
 }
 
-.nflx-claude-code-picker-project {
+.nbi-claude-code-picker-project {
   margin-bottom: 8px;
 }
 
-.nflx-claude-code-picker-project-label {
+.nbi-claude-code-picker-project-label {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -771,7 +771,7 @@ pre:has(.code-block-header) {
   padding: 0 2px;
 }
 
-.nflx-claude-code-picker-session {
+.nbi-claude-code-picker-session {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -784,32 +784,32 @@ pre:has(.code-block-header) {
   transition: border-color 0.1s;
 }
 
-.nflx-claude-code-picker-session:hover,
-.nflx-claude-code-picker-session:focus {
+.nbi-claude-code-picker-session:hover,
+.nbi-claude-code-picker-session:focus {
   border-color: var(--jp-brand-color1);
   outline: none;
 }
 
-.nflx-claude-code-picker-session-top {
+.nbi-claude-code-picker-session-top {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
-.nflx-claude-code-picker-session-id {
+.nbi-claude-code-picker-session-id {
   font-family: var(--jp-code-font-family);
   font-size: 12px;
   color: var(--jp-ui-font-color1);
   font-weight: 600;
 }
 
-.nflx-claude-code-picker-time {
+.nbi-claude-code-picker-time {
   margin-left: auto;
   font-size: 11px;
   color: var(--jp-ui-font-color3);
 }
 
-.nflx-claude-code-picker-msg {
+.nbi-claude-code-picker-msg {
   font-size: var(--jp-ui-font-size1);
   color: var(--jp-ui-font-color2);
   white-space: nowrap;
