@@ -92,25 +92,75 @@ class TestNBIConfigSaveAndLoad:
         config.nbi_user_dir = str(tmp_path)
         config.user_config_file = str(tmp_path / "config.json")
         config.user_mcp_file = str(tmp_path / "mcp.json")
-        
+
         config.user_config = {
             'rules_enabled': False,
             'active_rules': {'test.md': True}
         }
         config.user_mcp = {}
-        
+
         # Mock the actual save methods since we're testing the integration
         with patch('builtins.open'), patch('json.dump') as mock_dump, patch('os.makedirs'):
             config.save()
-            
+
             # Should be called twice (once for config, once for mcp)
             assert mock_dump.call_count == 2
-            
+
             # First call should be for the main config
             first_call_args = mock_dump.call_args_list[0][0]
             saved_config = first_call_args[0]
-            
+
             assert 'rules_enabled' in saved_config
             assert saved_config['rules_enabled'] is False
             assert saved_config['active_rules'] == {'test.md': True}
+
+
+class TestNBIConfigPolicyResolution:
+    """The boolean policies and string overrides feed through NBIConfig getters
+    so SDK consumers (claude.py, ai_service_manager) see resolved values."""
+
+    def test_chat_model_string_overrides_apply(self, mock_nbi_config):
+        config = mock_nbi_config
+        config.user_config = {
+            'chat_model': {'provider': 'github-copilot', 'model': 'gpt-4o'}
+        }
+        config.set_feature_policies(
+            {},
+            {'chat_model_provider': 'ollama', 'chat_model_id': 'llama3:latest'},
+        )
+        assert config.chat_model == {'provider': 'ollama', 'model': 'llama3:latest'}
+
+    def test_chat_model_partial_override_preserves_other_field(self, mock_nbi_config):
+        config = mock_nbi_config
+        config.user_config = {
+            'chat_model': {'provider': 'github-copilot', 'model': 'gpt-4o'}
+        }
+        config.set_feature_policies({}, {'chat_model_provider': 'ollama'})
+        # provider locked, model still user's choice
+        assert config.chat_model == {'provider': 'ollama', 'model': 'gpt-4o'}
+
+    def test_claude_settings_force_on_overrides_user_off(self, mock_nbi_config):
+        from notebook_intelligence.feature_flags import POLICY_FORCE_ON
+        config = mock_nbi_config
+        config.user_config = {'claude_settings': {'enabled': False}}
+        config.set_feature_policies({'claude_mode': POLICY_FORCE_ON}, {})
+        assert config.claude_settings['enabled'] is True
+
+    def test_claude_settings_api_key_override_applied_for_sdk(self, mock_nbi_config):
+        config = mock_nbi_config
+        config.user_config = {'claude_settings': {'api_key': 'sk-user'}}
+        config.set_feature_policies(
+            {}, {'claude_api_key': 'sk-locked-by-env'}
+        )
+        # SDK side sees the env-supplied key (claude.py forwards it).
+        assert config.claude_settings['api_key'] == 'sk-locked-by-env'
+
+    def test_no_overrides_returns_user_value_unchanged(self, mock_nbi_config):
+        config = mock_nbi_config
+        config.user_config = {
+            'chat_model': {'provider': 'github-copilot', 'model': 'gpt-4o'}
+        }
+        config.set_feature_policies({}, {})
+        # Identity check guarantees no needless allocation in the common case.
+        assert config.chat_model is config.user_config['chat_model']
 

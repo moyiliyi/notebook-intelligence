@@ -125,33 +125,48 @@ These config files store provider, model, and MCP configuration. **API keys for 
 
 > Manual edits to `config.json` require a JupyterLab restart to take effect. Edits via the Settings dialog are picked up live.
 
-### Cell output features
+### Admin policies
 
-Two cell-output context affordances are user-toggleable in the Settings panel:
+Most settings panel toggles can be locked by org administrators. Two shapes:
 
-- **Troubleshoot errors in output** — a context-menu entry on failed cells that sends the traceback + failing code to the chat model.
-- **Ask about this output** — a context-menu entry on cell outputs that attaches `{cell code, output payload}` to the chat sidebar as grounded context.
+**Boolean policies** use the `*_POLICY` suffix and accept three values: `user-choice` (default — user toggles freely), `force-on` (locked enabled), `force-off` (locked disabled). When forced, the panel control is disabled with a "Locked by your administrator" tooltip and any client-side write is ignored.
 
-Per-user preferences (default on):
+| Env var                                    | Locks the Settings panel control for      |
+| ------------------------------------------ | ----------------------------------------- |
+| `NBI_EXPLAIN_ERROR_POLICY`                 | "Explain cell errors"                     |
+| `NBI_OUTPUT_FOLLOWUP_POLICY`               | "Ask about cell outputs"                  |
+| `NBI_OUTPUT_TOOLBAR_POLICY`                | "Show output toolbar"                     |
+| `NBI_CLAUDE_MODE_POLICY`                   | "Enable Claude mode"                      |
+| `NBI_CLAUDE_CONTINUE_CONVERSATION_POLICY`  | "Remember conversation history"           |
+| `NBI_CLAUDE_CODE_TOOLS_POLICY`             | "Claude Code tools"                       |
+| `NBI_CLAUDE_JUPYTER_UI_TOOLS_POLICY`       | "Jupyter UI tools"                        |
+| `NBI_CLAUDE_SETTING_SOURCE_USER_POLICY`    | Setting source: User                      |
+| `NBI_CLAUDE_SETTING_SOURCE_PROJECT_POLICY` | Setting source: Project                   |
+| `NBI_STORE_GITHUB_ACCESS_TOKEN_POLICY`     | "Remember my GitHub Copilot access token" |
+
+The first three also have matching traitlets on `NotebookIntelligence` (`explain_error_policy`, `output_followup_policy`, `output_toolbar_policy`); add the others as needed in the same shape:
 
 ```python
-c.NBIConfig.enable_explain_error = True
-c.NBIConfig.enable_output_followup = True
+c.NotebookIntelligence.claude_mode_policy = "force-on"
+c.NotebookIntelligence.claude_jupyter_ui_tools_policy = "force-off"
 ```
 
-Org-wide policy traitlets (override the user preference when set to `force-on` or `force-off`):
+Per-user preferences (default on for the cell-output features) live in `config.json` as `enable_explain_error`, `enable_output_followup`, `enable_output_toolbar`.
 
-```python
-c.NotebookIntelligence.explain_error_policy = "user-choice"   # default
-c.NotebookIntelligence.output_followup_policy = "user-choice"
-```
+**Value-presence locks** for non-boolean settings: setting the env var to a non-empty value pins the control to that value and disables it. Empty/unset = user-choice.
 
-Equivalent environment-variable overrides:
+| Env var                                | Pins                                                                         |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| `NBI_CHAT_MODEL_PROVIDER`              | General → Chat model → Provider                                              |
+| `NBI_CHAT_MODEL_ID`                    | General → Chat model → Model                                                 |
+| `NBI_INLINE_COMPLETION_MODEL_PROVIDER` | General → Auto-complete model → Provider                                     |
+| `NBI_INLINE_COMPLETION_MODEL_ID`       | General → Auto-complete model → Model                                        |
+| `NBI_CLAUDE_CHAT_MODEL`                | Claude → Chat model                                                          |
+| `NBI_CLAUDE_INLINE_COMPLETION_MODEL`   | Claude → Auto-complete model                                                 |
+| `ANTHROPIC_API_KEY`                    | Claude → API Key (input is locked + blanked; the SDK reads the env directly) |
+| `ANTHROPIC_BASE_URL`                   | Claude → Base URL                                                            |
 
-- `NBI_EXPLAIN_ERROR_POLICY` — `user-choice` | `force-on` | `force-off`
-- `NBI_OUTPUT_FOLLOWUP_POLICY` — `user-choice` | `force-on` | `force-off`
-
-When a policy is `force-on` / `force-off`, the corresponding Settings panel checkbox is greyed out with a "Locked by your administrator" tooltip and any client-side write is ignored.
+Provider IDs: `github-copilot`, `openai-compatible`, `litellm-compatible`, `ollama`, `none`. The `*_MODEL_ID` value is whatever the chosen provider exposes (e.g. `gpt-4o`, `llama3:latest`). Claude model IDs are the literal IDs from the Anthropic API (e.g. `claude-opus-4-7`, `claude-sonnet-4-6`); empty string = "Default (recommended)"; `NBI_CLAUDE_INLINE_COMPLETION_MODEL` also accepts `none` (no inline completion in Claude mode) or `inherit` (use the General-tab Auto-complete model).
 
 ### Remembering GitHub Copilot login
 

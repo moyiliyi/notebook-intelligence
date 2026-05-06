@@ -5,11 +5,27 @@ import logging
 import os
 import sys
 
+from notebook_intelligence.feature_flags import (
+    CHAT_MODEL_OVERRIDES,
+    CLAUDE_SETTINGS_OVERRIDES,
+    INLINE_COMPLETION_MODEL_OVERRIDES,
+    apply_claude_policies,
+    apply_string_overrides,
+)
+
 log = logging.getLogger(__name__)
 
 class NBIConfig:
+    # Class-level defaults so a test that patches __init__ still sees empty
+    # dicts instead of AttributeError. Per-instance values are bound in
+    # __init__ so concurrent instances don't share state.
+    _feature_policies: dict = {}
+    _string_overrides: dict = {}
+
     def __init__(self, options: dict = {}):
         self.options = options
+        self._feature_policies = {}
+        self._string_overrides = {}
 
         self.deprecated_env_config_file = os.path.join(sys.prefix, "share", "jupyter", "nbi-config.json")
         self.deprecated_user_config_file = os.path.join(os.path.expanduser('~'), ".jupyter", "nbi-config.json")
@@ -95,14 +111,6 @@ class NBIConfig:
         return self.get('default_chat_mode', 'ask')
 
     @property
-    def chat_model(self):
-        return self.get('chat_model', {'provider': 'github-copilot', 'model': 'gpt-4.1'})
-
-    @property
-    def inline_completion_model(self):
-        return self.get('inline_completion_model', {'provider': 'github-copilot', 'model': 'gpt-4o-copilot'})
-
-    @property
     def embedding_model(self):
         return self.get('embedding_model', {})
 
@@ -129,9 +137,33 @@ class NBIConfig:
     def mcp_server_settings(self):
         return self.get('mcp_server_settings', {})
 
+    def set_feature_policies(self, policies: dict, string_overrides: dict) -> None:
+        """Adopt the resolved admin policies + string overrides."""
+        self._feature_policies = dict(policies)
+        self._string_overrides = dict(string_overrides)
+
     @property
     def claude_settings(self):
-        return self.get('claude_settings', {})
+        resolved = apply_claude_policies(
+            self.get('claude_settings', {}), self._feature_policies
+        )
+        return apply_string_overrides(
+            resolved, self._string_overrides, CLAUDE_SETTINGS_OVERRIDES
+        )
+
+    @property
+    def chat_model(self):
+        raw = self.get('chat_model', {'provider': 'github-copilot', 'model': 'gpt-4.1'})
+        return apply_string_overrides(
+            raw, self._string_overrides, CHAT_MODEL_OVERRIDES
+        )
+
+    @property
+    def inline_completion_model(self):
+        raw = self.get('inline_completion_model', {'provider': 'github-copilot', 'model': 'gpt-4o-copilot'})
+        return apply_string_overrides(
+            raw, self._string_overrides, INLINE_COMPLETION_MODEL_OVERRIDES
+        )
 
     @property
     def rules_enabled(self) -> bool:

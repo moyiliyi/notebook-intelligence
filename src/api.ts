@@ -150,6 +150,40 @@ export type CellOutputActionFlag = Exclude<
   'output_toolbar'
 >;
 
+// Boolean admin policies covering settings panel toggles. Mirrors
+// FEATURE_POLICY_NAMES in extension.py — keep them in sync.
+export type FeaturePolicyName =
+  | 'explain_error'
+  | 'output_followup'
+  | 'output_toolbar'
+  | 'claude_mode'
+  | 'claude_continue_conversation'
+  | 'claude_code_tools'
+  | 'claude_jupyter_ui_tools'
+  | 'claude_setting_source_user'
+  | 'claude_setting_source_project'
+  | 'store_github_access_token';
+
+export type IFeaturePolicies = Record<
+  FeaturePolicyName,
+  ICellOutputFeatureFlag
+>;
+
+// Non-boolean settings whose value is locked when an admin sets the
+// corresponding env var. The value itself is served via its existing
+// capabilities field; this only carries the locked flag.
+export type SettingLockName =
+  | 'chat_model_provider'
+  | 'chat_model_id'
+  | 'inline_completion_model_provider'
+  | 'inline_completion_model_id'
+  | 'claude_chat_model'
+  | 'claude_inline_completion_model'
+  | 'claude_api_key'
+  | 'claude_base_url';
+
+export type ISettingLocks = Record<SettingLockName, { locked: boolean }>;
+
 export class NBIConfig {
   get userHomeDir(): string {
     return this.capabilities.user_home_dir;
@@ -262,6 +296,49 @@ export class NBIConfig {
         locked: v.output_toolbar?.locked === true
       }
     };
+  }
+
+  get featurePolicies(): IFeaturePolicies {
+    const v = this.capabilities.feature_policies ?? {};
+    const names: FeaturePolicyName[] = [
+      'explain_error',
+      'output_followup',
+      'output_toolbar',
+      'claude_mode',
+      'claude_continue_conversation',
+      'claude_code_tools',
+      'claude_jupyter_ui_tools',
+      'claude_setting_source_user',
+      'claude_setting_source_project',
+      'store_github_access_token'
+    ];
+    const result = {} as IFeaturePolicies;
+    for (const name of names) {
+      result[name] = {
+        enabled: v[name]?.enabled === true,
+        locked: v[name]?.locked === true
+      };
+    }
+    return result;
+  }
+
+  get settingLocks(): ISettingLocks {
+    const v = this.capabilities.setting_locks ?? {};
+    const names: SettingLockName[] = [
+      'chat_model_provider',
+      'chat_model_id',
+      'inline_completion_model_provider',
+      'inline_completion_model_id',
+      'claude_chat_model',
+      'claude_inline_completion_model',
+      'claude_api_key',
+      'claude_base_url'
+    ];
+    const result = {} as ISettingLocks;
+    for (const name of names) {
+      result[name] = { locked: v[name]?.locked === true };
+    }
+    return result;
   }
 
   capabilities: any = {};

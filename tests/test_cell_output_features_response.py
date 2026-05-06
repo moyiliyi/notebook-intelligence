@@ -1,24 +1,38 @@
 # Copyright (c) Mehmet Bektas <mbektasgh@outlook.com>
 
-"""Tests for the capabilities-response helper that surfaces the
-explain_error / output_followup / output_toolbar feature gates to the
-frontend."""
+"""Tests for the capabilities-response helpers that surface admin policies
+and value-presence-locks to the frontend."""
 
 from types import SimpleNamespace
 
-from notebook_intelligence.extension import _build_cell_output_features_response
+from notebook_intelligence.extension import (
+    _build_cell_output_features_response,
+    _build_feature_policies_response,
+    _build_setting_locks_response,
+)
 from notebook_intelligence.feature_flags import (
+    CLAUDE_CODE_TOOLS_ID,
+    JUPYTER_UI_TOOLS_ID,
     POLICY_FORCE_OFF,
     POLICY_FORCE_ON,
     POLICY_USER_CHOICE,
 )
 
 
-def _config(*, explain=True, followup=True, toolbar=True):
+def _config(
+    *,
+    explain=True,
+    followup=True,
+    toolbar=True,
+    store_token=False,
+    claude_settings=None,
+):
     return SimpleNamespace(
         enable_explain_error=explain,
         enable_output_followup=followup,
         enable_output_toolbar=toolbar,
+        store_github_access_token=store_token,
+        claude_settings=claude_settings if claude_settings is not None else {},
     )
 
 
@@ -65,4 +79,119 @@ class TestBuildCellOutputFeaturesResponse:
             "explain_error": {"enabled": True, "locked": True},
             "output_followup": {"enabled": False, "locked": True},
             "output_toolbar": {"enabled": False, "locked": False},
+        }
+
+
+class TestBuildFeaturePoliciesResponse:
+    def test_empty_policies_match_user_state_unlocked(self):
+        response = _build_feature_policies_response(
+            {},
+            _config(
+                explain=True,
+                followup=False,
+                toolbar=True,
+                store_token=True,
+                claude_settings={
+                    "enabled": True,
+                    "continue_conversation": False,
+                    "tools": [CLAUDE_CODE_TOOLS_ID],
+                    "setting_sources": ["user", "project"],
+                },
+            ),
+        )
+        assert response["explain_error"] == {"enabled": True, "locked": False}
+        assert response["claude_mode"] == {"enabled": True, "locked": False}
+        assert response["claude_continue_conversation"] == {
+            "enabled": False,
+            "locked": False,
+        }
+        assert response["claude_code_tools"] == {"enabled": True, "locked": False}
+        assert response["claude_jupyter_ui_tools"] == {
+            "enabled": False,
+            "locked": False,
+        }
+        assert response["claude_setting_source_user"] == {
+            "enabled": True,
+            "locked": False,
+        }
+        assert response["claude_setting_source_project"] == {
+            "enabled": True,
+            "locked": False,
+        }
+        assert response["store_github_access_token"] == {
+            "enabled": True,
+            "locked": False,
+        }
+
+    def test_force_on_locks_each_independently(self):
+        response = _build_feature_policies_response(
+            {
+                "claude_mode": POLICY_FORCE_ON,
+                "claude_jupyter_ui_tools": POLICY_FORCE_OFF,
+                "store_github_access_token": POLICY_FORCE_ON,
+            },
+            _config(
+                store_token=False,
+                claude_settings={
+                    "enabled": False,
+                    "tools": [JUPYTER_UI_TOOLS_ID],
+                },
+            ),
+        )
+        assert response["claude_mode"] == {"enabled": True, "locked": True}
+        assert response["claude_jupyter_ui_tools"] == {
+            "enabled": False,
+            "locked": True,
+        }
+        assert response["store_github_access_token"] == {
+            "enabled": True,
+            "locked": True,
+        }
+        # Untouched policies stay unlocked and reflect user prefs.
+        assert response["claude_continue_conversation"]["locked"] is False
+
+    def test_handles_missing_claude_settings(self):
+        # Brand-new install: claude_settings is {} entirely.
+        response = _build_feature_policies_response(
+            {}, _config(claude_settings={})
+        )
+        assert response["claude_mode"]["enabled"] is False
+        assert response["claude_continue_conversation"]["enabled"] is False
+        assert response["claude_code_tools"]["enabled"] is False
+
+
+class TestBuildSettingLocksResponse:
+    def test_empty_overrides_means_nothing_locked(self):
+        response = _build_setting_locks_response({})
+        for entry in response.values():
+            assert entry == {"locked": False}
+
+    def test_presence_of_value_locks_the_field(self):
+        response = _build_setting_locks_response(
+            {
+                "chat_model_provider": "ollama",
+                "chat_model_id": "",
+                "claude_api_key": "sk-secret",
+                "claude_base_url": "https://api.anthropic.com",
+            }
+        )
+        assert response["chat_model_provider"] == {"locked": True}
+        # Empty string must not lock — that's the user-choice signal.
+        assert response["chat_model_id"] == {"locked": False}
+        assert response["claude_api_key"] == {"locked": True}
+        assert response["claude_base_url"] == {"locked": True}
+        # Unrelated keys remain unlocked.
+        assert response["claude_chat_model"] == {"locked": False}
+
+    def test_response_includes_every_known_lock_name(self):
+        response = _build_setting_locks_response({})
+        assert set(response.keys()) == {
+            "chat_model_provider",
+            "chat_model_id",
+            "inline_completion_model_provider",
+            "inline_completion_model_id",
+            "claude_chat_model",
+            "claude_inline_completion_model",
+            "claude_api_key",
+            "claude_base_url",
         }

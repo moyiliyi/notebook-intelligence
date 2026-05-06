@@ -51,6 +51,15 @@ class AIServiceManager(Host):
         self._extension_toolsets: Dict[str, list[Toolset]] = {}
         self._options = options.copy()
         self._nbi_config = NBIConfig({"server_root_dir": self._options.get('server_root_dir', '')})
+        # Apply admin policies before any consumer (model bootstrap, MCP
+        # connect, login_with_existing_credentials) reads claude_settings or
+        # chat_model from nbi_config — otherwise NBI_CHAT_MODEL_PROVIDER /
+        # NBI_CLAUDE_MODE_POLICY etc. would only take effect after the first
+        # capabilities GET.
+        self._nbi_config.set_feature_policies(
+            self._options.get("feature_policies") or {},
+            self._options.get("string_overrides") or {},
+        )
         self._openai_compatible_llm_provider = OpenAICompatibleLLMProvider()
         self._litellm_compatible_llm_provider = LiteLLMCompatibleLLMProvider()
         self._ollama_llm_provider = OllamaLLMProvider()

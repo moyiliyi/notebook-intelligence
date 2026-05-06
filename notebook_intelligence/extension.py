@@ -26,10 +26,18 @@ from notebook_intelligence.api import CancelToken, ChatMode, ChatResponse, ChatR
 from notebook_intelligence.ai_service_manager import AIServiceManager
 from notebook_intelligence.cell_output import coerce_payload as _coerce_output_context, format_output_context as _format_output_context
 from notebook_intelligence.feature_flags import (
+    CHAT_MODEL_OVERRIDES,
+    CLAUDE_CODE_TOOLS_ID,
+    CLAUDE_SETTINGS_OVERRIDES,
+    INLINE_COMPLETION_MODEL_OVERRIDES,
+    JUPYTER_UI_TOOLS_ID,
     POLICY_FORCE_OFF,
     POLICY_FORCE_ON,
     POLICY_USER_CHOICE,
     VALID_POLICIES,
+    apply_claude_policies,
+    apply_string_overrides,
+    is_locked,
     resolve_feature_flag,
 )
 from notebook_intelligence.claude import ClaudeCodeChatParticipant, fetch_claude_models
@@ -143,15 +151,132 @@ def _resolve_policy_with_env(env_var_name: str, traitlet_value: str) -> str:
     return traitlet_value
 
 
+# Single source of truth for the boolean policies. Each entry is
+# ``(policy_name, env_var, traitlet_attr)``. Drives env-var resolution, the
+# capabilities response, and the lock-rejection set in ConfigHandler.
+FEATURE_POLICY_SPEC = (
+    ("explain_error", "NBI_EXPLAIN_ERROR_POLICY", "explain_error_policy"),
+    ("output_followup", "NBI_OUTPUT_FOLLOWUP_POLICY", "output_followup_policy"),
+    ("output_toolbar", "NBI_OUTPUT_TOOLBAR_POLICY", "output_toolbar_policy"),
+    ("claude_mode", "NBI_CLAUDE_MODE_POLICY", "claude_mode_policy"),
+    (
+        "claude_continue_conversation",
+        "NBI_CLAUDE_CONTINUE_CONVERSATION_POLICY",
+        "claude_continue_conversation_policy",
+    ),
+    (
+        "claude_code_tools",
+        "NBI_CLAUDE_CODE_TOOLS_POLICY",
+        "claude_code_tools_policy",
+    ),
+    (
+        "claude_jupyter_ui_tools",
+        "NBI_CLAUDE_JUPYTER_UI_TOOLS_POLICY",
+        "claude_jupyter_ui_tools_policy",
+    ),
+    (
+        "claude_setting_source_user",
+        "NBI_CLAUDE_SETTING_SOURCE_USER_POLICY",
+        "claude_setting_source_user_policy",
+    ),
+    (
+        "claude_setting_source_project",
+        "NBI_CLAUDE_SETTING_SOURCE_PROJECT_POLICY",
+        "claude_setting_source_project_policy",
+    ),
+    (
+        "store_github_access_token",
+        "NBI_STORE_GITHUB_ACCESS_TOKEN_POLICY",
+        "store_github_access_token_policy",
+    ),
+)
+FEATURE_POLICY_NAMES = tuple(name for name, _, _ in FEATURE_POLICY_SPEC)
+
+# ``(setting_lock_name, env_var)`` pairs for the value-presence-locks. The
+# claude_api_key entry maps to ANTHROPIC_API_KEY (the SDK's native convention)
+# rather than an NBI-prefixed env var. Same for claude_base_url.
+STRING_OVERRIDE_SPEC = (
+    ("chat_model_provider", "NBI_CHAT_MODEL_PROVIDER"),
+    ("chat_model_id", "NBI_CHAT_MODEL_ID"),
+    ("inline_completion_model_provider", "NBI_INLINE_COMPLETION_MODEL_PROVIDER"),
+    ("inline_completion_model_id", "NBI_INLINE_COMPLETION_MODEL_ID"),
+    ("claude_chat_model", "NBI_CLAUDE_CHAT_MODEL"),
+    ("claude_inline_completion_model", "NBI_CLAUDE_INLINE_COMPLETION_MODEL"),
+    ("claude_api_key", "ANTHROPIC_API_KEY"),
+    ("claude_base_url", "ANTHROPIC_BASE_URL"),
+)
+SETTING_LOCK_NAMES = tuple(name for name, _ in STRING_OVERRIDE_SPEC)
+
+
+def _build_feature_policies_response(policies: dict, nbi_config) -> dict:
+    """Resolve every boolean policy against the user's stored config.
+
+    Returns ``{name: {enabled, locked}}`` for every name in
+    FEATURE_POLICY_NAMES. The frontend iterates this dict, so adding a new
+    feature only needs an entry here plus a matching env-var resolution.
+    """
+    claude_settings = nbi_config.claude_settings or {}
+    tools = claude_settings.get("tools") or []
+    sources = claude_settings.get("setting_sources") or []
+
+    user_values = {
+        "explain_error": nbi_config.enable_explain_error,
+        "output_followup": nbi_config.enable_output_followup,
+        "output_toolbar": nbi_config.enable_output_toolbar,
+        "claude_mode": bool(claude_settings.get("enabled", False)),
+        "claude_continue_conversation": bool(
+            claude_settings.get("continue_conversation", False)
+        ),
+        "claude_code_tools": CLAUDE_CODE_TOOLS_ID in tools,
+        "claude_jupyter_ui_tools": JUPYTER_UI_TOOLS_ID in tools,
+        "claude_setting_source_user": "user" in sources,
+        "claude_setting_source_project": "project" in sources,
+        "store_github_access_token": bool(nbi_config.store_github_access_token),
+    }
+
+    response = {}
+    for name in FEATURE_POLICY_NAMES:
+        enabled, locked = resolve_feature_flag(
+            policies.get(name, POLICY_USER_CHOICE), user_values[name]
+        )
+        response[name] = {"enabled": enabled, "locked": locked}
+    return response
+
+
+def _build_setting_locks_response(string_overrides: dict) -> dict:
+    """Surface lock state for non-boolean settings (model pickers, API key, base URL).
+
+    The values themselves are still served through their existing capabilities
+    fields (chat_model, claude_settings, ...). This dict only carries the
+    locked flag so the frontend knows which inputs to disable.
+    """
+    return {
+        name: {"locked": bool(string_overrides.get(name))}
+        for name in SETTING_LOCK_NAMES
+    }
+
+
+def _scrub_credentials_for_wire(claude_settings: dict, string_overrides: dict) -> dict:
+    """Strip the api_key from the capabilities response when locked by env.
+
+    The Anthropic SDK reads ANTHROPIC_API_KEY directly; surfacing the value
+    through the frontend would leak the credential.
+    """
+    if not string_overrides.get("claude_api_key"):
+        return claude_settings
+    result = dict(claude_settings or {})
+    result["api_key"] = ""
+    return result
+
+
 class GetCapabilitiesHandler(APIHandler):
     disabled_tools = []
     allow_enabling_tools_with_env = False
     disabled_providers = []
     allow_enabling_providers_with_env = False
     enable_chat_feedback = False
-    explain_error_policy = POLICY_USER_CHOICE
-    output_followup_policy = POLICY_USER_CHOICE
-    output_toolbar_policy = POLICY_USER_CHOICE
+    feature_policies = {}
+    string_overrides = {}
 
     @tornado.web.authenticated
     def get(self):
@@ -228,16 +353,22 @@ class GetCapabilitiesHandler(APIHandler):
                 "extensions": extensions
             },
             "mcp_server_settings": nbi_config.mcp_server_settings,
-            "claude_settings": nbi_config.claude_settings,
+            "claude_settings": _scrub_credentials_for_wire(
+                nbi_config.claude_settings, self.string_overrides
+            ),
             "claude_models": ai_service_manager.claude_models,
             "default_chat_mode": nbi_config.default_chat_mode,
             "chat_feedback_enabled": self.enable_chat_feedback,
             "cell_output_features": _build_cell_output_features_response(
-                self.explain_error_policy,
-                self.output_followup_policy,
-                self.output_toolbar_policy,
+                self.feature_policies.get("explain_error", POLICY_USER_CHOICE),
+                self.feature_policies.get("output_followup", POLICY_USER_CHOICE),
+                self.feature_policies.get("output_toolbar", POLICY_USER_CHOICE),
                 nbi_config,
-            )
+            ),
+            "feature_policies": _build_feature_policies_response(
+                self.feature_policies, nbi_config
+            ),
+            "setting_locks": _build_setting_locks_response(self.string_overrides),
         }
         for participant_id in ai_service_manager.chat_participants:
             participant = ai_service_manager.chat_participants[participant_id]
@@ -254,9 +385,8 @@ class GetCapabilitiesHandler(APIHandler):
         self.finish(json.dumps(response))
 
 class ConfigHandler(APIHandler):
-    explain_error_policy = POLICY_USER_CHOICE
-    output_followup_policy = POLICY_USER_CHOICE
-    output_toolbar_policy = POLICY_USER_CHOICE
+    feature_policies = {}
+    string_overrides = {}
 
     @tornado.web.authenticated
     def post(self):
@@ -273,38 +403,85 @@ class ConfigHandler(APIHandler):
             "enable_output_followup",
             "enable_output_toolbar",
         ])
+        # Top-level keys whose write is rejected outright when locked.
         locked_keys = set()
-        if self.explain_error_policy in (POLICY_FORCE_ON, POLICY_FORCE_OFF):
+        if is_locked(self.feature_policies.get("explain_error", POLICY_USER_CHOICE)):
             locked_keys.add("enable_explain_error")
-        if self.output_followup_policy in (POLICY_FORCE_ON, POLICY_FORCE_OFF):
+        if is_locked(self.feature_policies.get("output_followup", POLICY_USER_CHOICE)):
             locked_keys.add("enable_output_followup")
-        if self.output_toolbar_policy in (POLICY_FORCE_ON, POLICY_FORCE_OFF):
+        if is_locked(self.feature_policies.get("output_toolbar", POLICY_USER_CHOICE)):
             locked_keys.add("enable_output_toolbar")
-        has_model_change = "chat_model" in data or "inline_completion_model" in data
+        if is_locked(self.feature_policies.get("store_github_access_token", POLICY_USER_CHOICE)):
+            locked_keys.add("store_github_access_token")
+        # chat_model / inline_completion_model are locked when *either* of their
+        # provider/id env vars is set; the resolver below preserves the locked
+        # subfield so a user can still update the unlocked one.
+        chat_model_locked = bool(
+            self.string_overrides.get("chat_model_provider")
+            or self.string_overrides.get("chat_model_id")
+        )
+        inline_model_locked = bool(
+            self.string_overrides.get("inline_completion_model_provider")
+            or self.string_overrides.get("inline_completion_model_id")
+        )
+
+        has_model_change = False
         has_claude_settings_change = False
         for key in data:
             if key in locked_keys:
                 continue
-            if key in valid_keys:
-                ai_service_manager.nbi_config.set(key, data[key])
-                if key == "store_github_access_token":
-                    if data[key]:
-                        github_copilot.store_github_access_token()
-                    else:
-                        github_copilot.delete_stored_github_access_token()
-                elif key == "mcp_server_settings":
-                    disabled_mcp_servers = []
-                    for server_id in data[key]:
-                        server_settings = data[key][server_id]
-                        if server_settings.get("disabled") == True:
-                            disabled_mcp_servers.append(server_id)
-                    ai_service_manager.update_mcp_server_connections(disabled_mcp_servers)
-                elif key == "claude_settings":
-                    has_claude_settings_change = True
-                    default_chat_participant = ai_service_manager.default_chat_participant
-                    if isinstance(default_chat_participant, ClaudeCodeChatParticipant):
-                        # needed to disconnect
-                        default_chat_participant.update_client_debounced()
+            if key not in valid_keys:
+                continue
+            value = data[key]
+            # Re-apply the env override after the user's POST so locked fields
+            # stay pinned; non-locked fields keep the user's value.
+            if key == "chat_model":
+                value = apply_string_overrides(
+                    value, self.string_overrides, CHAT_MODEL_OVERRIDES
+                )
+                if chat_model_locked and value == ai_service_manager.nbi_config.chat_model:
+                    continue
+                has_model_change = True
+            elif key == "inline_completion_model":
+                value = apply_string_overrides(
+                    value, self.string_overrides, INLINE_COMPLETION_MODEL_OVERRIDES
+                )
+                if (
+                    inline_model_locked
+                    and value == ai_service_manager.nbi_config.inline_completion_model
+                ):
+                    continue
+                has_model_change = True
+            elif key == "claude_settings":
+                value = apply_claude_policies(value, self.feature_policies)
+                value = apply_string_overrides(
+                    value, self.string_overrides, CLAUDE_SETTINGS_OVERRIDES
+                )
+                # ANTHROPIC_API_KEY is a credential; don't persist it to
+                # config.json. The SDK reads it from process env directly when
+                # claude_settings.api_key is empty.
+                if self.string_overrides.get("claude_api_key"):
+                    value = dict(value)
+                    value["api_key"] = ""
+            ai_service_manager.nbi_config.set(key, value)
+            if key == "store_github_access_token":
+                if value:
+                    github_copilot.store_github_access_token()
+                else:
+                    github_copilot.delete_stored_github_access_token()
+            elif key == "mcp_server_settings":
+                disabled_mcp_servers = []
+                for server_id in value:
+                    server_settings = value[server_id]
+                    if server_settings.get("disabled") == True:
+                        disabled_mcp_servers.append(server_id)
+                ai_service_manager.update_mcp_server_connections(disabled_mcp_servers)
+            elif key == "claude_settings":
+                has_claude_settings_change = True
+                default_chat_participant = ai_service_manager.default_chat_participant
+                if isinstance(default_chat_participant, ClaudeCodeChatParticipant):
+                    # needed to disconnect
+                    default_chat_participant.update_client_debounced()
 
         ai_service_manager.nbi_config.save()
         if has_model_change or has_claude_settings_change:
@@ -1504,6 +1681,80 @@ class NotebookIntelligence(ExtensionApp):
         config=True,
     )
 
+    claude_mode_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether Claude mode is enabled. Same semantics as
+        explain_error_policy. Overridden by the NBI_CLAUDE_MODE_POLICY env var.
+        """,
+        config=True,
+    )
+
+    claude_continue_conversation_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether Claude remembers conversation history.
+        Overridden by the NBI_CLAUDE_CONTINUE_CONVERSATION_POLICY env var.
+        """,
+        config=True,
+    )
+
+    claude_code_tools_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether the Claude Code built-in tool set is
+        granted to the agent. Overridden by the NBI_CLAUDE_CODE_TOOLS_POLICY
+        env var.
+        """,
+        config=True,
+    )
+
+    claude_jupyter_ui_tools_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether the Jupyter UI tool set is granted to
+        Claude. Overridden by the NBI_CLAUDE_JUPYTER_UI_TOOLS_POLICY env var.
+        """,
+        config=True,
+    )
+
+    claude_setting_source_user_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether Claude reads the user-scoped settings
+        source (~/.claude/settings.json). Overridden by the
+        NBI_CLAUDE_SETTING_SOURCE_USER_POLICY env var.
+        """,
+        config=True,
+    )
+
+    claude_setting_source_project_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether Claude reads the project-scoped settings
+        source. Overridden by the NBI_CLAUDE_SETTING_SOURCE_PROJECT_POLICY
+        env var.
+        """,
+        config=True,
+    )
+
+    store_github_access_token_policy = TraitletEnum(
+        list(VALID_POLICIES),
+        default_value=POLICY_USER_CHOICE,
+        help="""
+        Org-wide policy for whether the GitHub Copilot access token is
+        persisted to disk. Overridden by the
+        NBI_STORE_GITHUB_ACCESS_TOKEN_POLICY env var.
+        """,
+        config=True,
+    )
+
     skills_manifest = Unicode(
         default_value="",
         help="""
@@ -1539,15 +1790,45 @@ class NotebookIntelligence(ExtensionApp):
     def initialize_settings(self):
         pass
 
+    def _publish_policies(self, feature_policies: dict, string_overrides: dict) -> None:
+        """Wire the resolved policies into the HTTP handlers.
+
+        ``nbi_config`` is already configured during ``AIServiceManager.__init__``
+        so its model-bootstrap path sees the policy-resolved values.
+        """
+        GetCapabilitiesHandler.feature_policies = feature_policies
+        GetCapabilitiesHandler.string_overrides = string_overrides
+        ConfigHandler.feature_policies = feature_policies
+        ConfigHandler.string_overrides = string_overrides
+
     def initialize_handlers(self):
         NotebookIntelligence.root_dir = self.serverapp.root_dir
         set_jupyter_root_dir(NotebookIntelligence.root_dir)
         server_root_dir = os.path.expanduser(self.serverapp.web_app.settings["server_root_dir"])
-        self.initialize_ai_service(server_root_dir)
-        self._setup_handlers(self.serverapp.web_app)
+        # Resolve admin policies first so the AI service sees the locked
+        # values during its initial model bootstrap (e.g. NBI_CLAUDE_MODE_POLICY
+        # =force-on actually starts Claude mode rather than waiting for the
+        # first capabilities GET).
+        feature_policies = {
+            name: _resolve_policy_with_env(env_var, getattr(self, attr))
+            for name, env_var, attr in FEATURE_POLICY_SPEC
+        }
+        string_overrides = {
+            name: os.environ.get(env_var, "").strip()
+            for name, env_var in STRING_OVERRIDE_SPEC
+        }
+        self.initialize_ai_service(
+            server_root_dir, feature_policies, string_overrides
+        )
+        self._setup_handlers(self.serverapp.web_app, feature_policies, string_overrides)
         self.serverapp.log.info(f"Registered {self.name} server extension")
 
-    def initialize_ai_service(self, server_root_dir: str):
+    def initialize_ai_service(
+        self,
+        server_root_dir: str,
+        feature_policies: dict,
+        string_overrides: dict,
+    ):
         global ai_service_manager
         manifest_source = os.environ.get("NBI_SKILLS_MANIFEST", "").strip() or self.skills_manifest.strip()
         managed_token = (
@@ -1568,6 +1849,8 @@ class NotebookIntelligence(ExtensionApp):
             "skills_manifest": manifest_source,
             "skills_manifest_interval": manifest_interval,
             "managed_skills_token": managed_token,
+            "feature_policies": feature_policies,
+            "string_overrides": string_overrides,
         })
 
     def initialize_templates(self):
@@ -1578,7 +1861,7 @@ class NotebookIntelligence(ExtensionApp):
         github_copilot.handle_stop_request()
         ai_service_manager.handle_stop_request()
 
-    def _setup_handlers(self, web_app):
+    def _setup_handlers(self, web_app, feature_policies: dict, string_overrides: dict):
         host_pattern = ".*$"
 
         base_url = web_app.settings["base_url"]
@@ -1614,18 +1897,7 @@ class NotebookIntelligence(ExtensionApp):
         GetCapabilitiesHandler.disabled_providers = self.disabled_providers
         GetCapabilitiesHandler.allow_enabling_providers_with_env = self.allow_enabling_providers_with_env
         GetCapabilitiesHandler.enable_chat_feedback = self.enable_chat_feedback
-        GetCapabilitiesHandler.explain_error_policy = _resolve_policy_with_env(
-            "NBI_EXPLAIN_ERROR_POLICY", self.explain_error_policy
-        )
-        GetCapabilitiesHandler.output_followup_policy = _resolve_policy_with_env(
-            "NBI_OUTPUT_FOLLOWUP_POLICY", self.output_followup_policy
-        )
-        GetCapabilitiesHandler.output_toolbar_policy = _resolve_policy_with_env(
-            "NBI_OUTPUT_TOOLBAR_POLICY", self.output_toolbar_policy
-        )
-        ConfigHandler.explain_error_policy = GetCapabilitiesHandler.explain_error_policy
-        ConfigHandler.output_followup_policy = GetCapabilitiesHandler.output_followup_policy
-        ConfigHandler.output_toolbar_policy = GetCapabilitiesHandler.output_toolbar_policy
+        self._publish_policies(feature_policies, string_overrides)
         NotebookIntelligence.handlers = [
             (route_pattern_capabilities, GetCapabilitiesHandler),
             (route_pattern_config, ConfigHandler),
