@@ -719,6 +719,8 @@ pre:has(.code-block-header) {
   display: flex;
   flex-direction: column;
   gap: 0;
+  width: 500px;
+  height: 400px;
 }
 
 .nbi-claude-code-picker-search {
@@ -731,6 +733,7 @@ pre:has(.code-block-header) {
   background: var(--jp-layout-color1);
   color: var(--jp-ui-font-color1);
   font-size: var(--jp-ui-font-size1);
+  outline: none;
 }
 
 .nbi-claude-code-picker-list {

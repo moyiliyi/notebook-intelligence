@@ -1125,7 +1125,7 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const picker = new PickerWidget();
         picker.addClass('nbi-claude-code-picker');
         const dialog = new Dialog({
-          title: 'Claude Code',
+          title: 'Claude Code terminal session',
           body: picker,
           buttons: [
             Dialog.cancelButton({ label: 'Cancel' }),
