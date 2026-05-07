@@ -8,6 +8,12 @@ Rules live in `~/.jupyter/nbi/rules/`. NBI loads them at startup, watches the di
 
 Selected rules are concatenated in priority order and prepended to the system prompt sent to the LLM.
 
+## Repository-level `AGENTS.md`
+
+If the Jupyter project root contains an `AGENTS.md`, NBI appends it to the system prompt under the **Additional Guidelines** heading alongside the rules described below. This works the same as the [AGENTS.md convention](https://agents.md/) used by other coding agents. The file is project-scoped: each project's `AGENTS.md` only applies when JupyterLab is launched from that directory.
+
+`AGENTS.md` and the ruleset system are additive — both contribute to the same prompt section when both exist.
+
 ## Creating rules
 
 ### Global rules — apply to all contexts

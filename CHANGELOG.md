@@ -8,6 +8,47 @@ For each release we list user-facing changes grouped as **Added**, **Changed**, 
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## [4.7.0] — unreleased
+
+### Added
+
+- **Cell output context menu and hover toolbar** — right-click a cell output (or hover for the toolbar) for **Explain**, **Ask**, and **Troubleshoot** quick actions that open the chat sidebar with the output already attached as context. Per-user toggles live in `config.json` (`enable_explain_error`, `enable_output_followup`, `enable_output_toolbar`, default on); admins can lock them with the `NBI_EXPLAIN_ERROR_POLICY` / `NBI_OUTPUT_FOLLOWUP_POLICY` / `NBI_OUTPUT_TOOLBAR_POLICY` env vars.
+- **Cell output as chat context** — outputs are forwarded as structured MIME bundles, including images for vision-capable models. Token-bounded so large outputs don't overflow the context window.
+- **Image attachments in chat** — paste or attach images alongside a chat prompt.
+- **Notebook toolbar button for quick notebook generation** — a sparkle icon on the active notebook's toolbar opens a popover that scopes the generation to that notebook.
+- **Streaming inline-chat responses** — the inline chat popover now streams tokens as they arrive instead of waiting for the full response.
+- **Claude Code launcher tile** — a Claude Code tile in the JupyterLab launcher opens a session picker (resume an existing transcript or start a new one in the active directory).
+- **Copy-to-clipboard for Claude session IDs** — pick up a previous transcript without re-typing the id.
+- **Claude WebSocket heartbeat** — keeps long-running Claude agent requests alive through upstream proxy / load balancer idle timeouts (e.g. JupyterHub's nginx default of 60s) by sending a status heartbeat every 20s while a request is in flight.
+- **Repo-level `AGENTS.md`** — when a project root contains `AGENTS.md`, NBI appends it under the system prompt's "Additional Guidelines" alongside the existing ruleset injection.
+- **Extended admin policy coverage** — every Settings panel toggle is now lockable via an env var. New boolean policies: `NBI_CLAUDE_MODE_POLICY`, `NBI_CLAUDE_CONTINUE_CONVERSATION_POLICY`, `NBI_CLAUDE_CODE_TOOLS_POLICY`, `NBI_CLAUDE_JUPYTER_UI_TOOLS_POLICY`, `NBI_CLAUDE_SETTING_SOURCE_USER_POLICY`, `NBI_CLAUDE_SETTING_SOURCE_PROJECT_POLICY`, `NBI_STORE_GITHUB_ACCESS_TOKEN_POLICY`. New value-presence locks: `NBI_CHAT_MODEL_PROVIDER`, `NBI_CHAT_MODEL_ID`, `NBI_INLINE_COMPLETION_MODEL_PROVIDER`, `NBI_INLINE_COMPLETION_MODEL_ID`, `NBI_CLAUDE_CHAT_MODEL`, `NBI_CLAUDE_INLINE_COMPLETION_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`. See [README → Admin policies](README.md#admin-policies).
+- `/claude-sessions` HTTP route accepts `?scope=cwd` to filter to sessions whose recorded `cwd` matches the lab's working directory.
+
+### Changed
+
+- Claude agent connection now happens in the background so JupyterLab finishes loading without waiting on the SDK handshake.
+- Inline-chat edits preserve the cell's undo history — accepting a suggestion no longer clobbers the previous undo stack.
+- Claude session pickers in the chat sidebar and the launcher dialog are unified; the launcher tile is gated to only appear when Claude mode is enabled and the CLI is available.
+- "New Session" from the launcher now opens in the file browser's active subdirectory instead of the lab root.
+
+### Fixed
+
+- Spurious "Skills reloaded" notification when launching a Claude session via the launcher. The watcher now keys off a structural signature of bundle dirs + `SKILL.md` mtimes, ignoring sibling writes (`.DS_Store`, `.git/`, log/cache files) to the parent `~/.claude/skills/` directory.
+- nbformat `multiline_string` handling in cell-output bundles — kernels that emit text fields as a list of strings (R, Julia, older IPython) no longer produce comma-joined garbage in the model's context.
+- Several public-API hygiene fixes in `notebook_intelligence.api`: `raise NotImplemented` → `raise NotImplementedError` (the former raised `TypeError`), `Toolset(tools=[])` and four other shared-default-argument cases corrected, `Signal.disconnect` tolerates double-disconnect with a debug-level log, registrar methods raise a new `RegistrationError` instead of silently logging.
+- Claude headers (model + version) are now sent on inline completion calls, matching the chat path.
+- OpenAI-compatible provider drops the unsupported `tool` `strict` flag when targeting vLLM (#108).
+- Resolve symlinks when locating Claude session transcripts so `~/.claude/projects/` symlinked off another volume keeps working.
+- Claude worker thread no longer crashes on cancellation; the chat loop recovers cleanly.
+- "Generating..." row no longer reflows the chat sidebar on narrow widths.
+- Claude picker previews and session resume cleaned up: dropped the meaningless `Unknown skill:` lines, hidden empty preview rows, fixed picker styling, kept keyboard navigation accessible.
+- Skills popup dismisses on click-outside or when the input is cleared.
+- Traitlets `DeprecationWarning` ("Traits should be given as instances, not types") at startup is silenced for the `disabled_*` config.
+
+### Internal
+
+- CI runs `pytest tests/` and `jlpm test` on every PR. The `[test]` extra was added to `pyproject.toml`. Both build jobs declare `permissions: { contents: read }` so a compromised step can't push.
+
 <!-- <END NEW CHANGELOG ENTRY> -->
 
 ## [4.5.0] — 2026-04-09
@@ -128,7 +169,8 @@ For each release we list user-facing changes grouped as **Added**, **Changed**, 
 - Settings UI restructured around Claude vs default mode.
 - WebSocket connection reliability improvements.
 
-[unreleased]: https://github.com/notebook-intelligence/notebook-intelligence/compare/v4.5.0...HEAD
+[unreleased]: https://github.com/notebook-intelligence/notebook-intelligence/compare/v4.7.0...HEAD
+[4.7.0]: https://github.com/notebook-intelligence/notebook-intelligence/compare/v4.6.0...v4.7.0
 [4.5.0]: https://github.com/notebook-intelligence/notebook-intelligence/compare/v4.4.0...v4.5.0
 [4.4.0]: https://github.com/notebook-intelligence/notebook-intelligence/compare/v4.3.2...v4.4.0
 [4.3.2]: https://github.com/notebook-intelligence/notebook-intelligence/compare/v4.3.1...v4.3.2
