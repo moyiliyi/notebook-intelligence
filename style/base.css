@@ -790,7 +790,8 @@ pre:has(.code-block-header) {
 }
 
 .nbi-claude-code-picker-session:hover,
-.nbi-claude-code-picker-session:focus {
+.nbi-claude-code-picker-session:focus,
+.nbi-claude-code-picker-session.highlighted {
   border-color: var(--jp-brand-color1);
   outline: none;
 }
