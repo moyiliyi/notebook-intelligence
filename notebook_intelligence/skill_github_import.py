@@ -62,7 +62,20 @@ class _GitHubOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        new_host = (urllib.parse.urlparse(newurl).hostname or "").lower()
+        new_parsed = urllib.parse.urlparse(newurl)
+        # Refuse HTTPS → HTTP downgrade. Even if the redirect lands on a
+        # GitHub host, an attacker on-path who can spoof the response could
+        # chain ``http://api.github.com/...`` to capture the bearer token in
+        # cleartext or serve a doctored tarball without TLS.
+        if new_parsed.scheme.lower() != "https":
+            raise urllib.error.HTTPError(
+                req.full_url,
+                code,
+                f"Refusing non-HTTPS redirect: {newurl}",
+                headers,
+                fp,
+            )
+        new_host = (new_parsed.hostname or "").lower()
         if new_host not in _ALLOWED_REDIRECT_HOSTS:
             raise urllib.error.HTTPError(
                 req.full_url,
@@ -76,10 +89,11 @@ class _GitHubOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
             return None
         orig_host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
         if new_host != orig_host:
-            for h in [k for k in new_req.headers if k.lower() == "authorization"]:
-                del new_req.headers[h]
-            for h in [k for k in new_req.unredirected_hdrs if k.lower() == "authorization"]:
-                del new_req.unredirected_hdrs[h]
+            # ``Request.add_header`` stores keys as ``.title()``-cased, so
+            # "Authorization" is the canonical form. ``pop`` is a no-op when
+            # the header was set on the un-redirected side instead.
+            new_req.headers.pop("Authorization", None)
+            new_req.unredirected_hdrs.pop("Authorization", None)
         return new_req
 
 
@@ -125,7 +139,7 @@ def parse_github_url(url: str) -> GitHubRef:
         raise ValueError(f"Invalid URL: {e}")
     if parsed.scheme not in ("http", "https"):
         raise ValueError("URL must use https://")
-    if parsed.netloc not in ("github.com", "www.github.com"):
+    if parsed.netloc.lower() not in ("github.com", "www.github.com"):
         raise ValueError("Only github.com URLs are supported")
     parts = [p for p in parsed.path.split("/") if p]
     if len(parts) < 2:

@@ -97,6 +97,22 @@ class TestGitHubOnlyRedirect:
                 "https://github.com.evil.com/loot",
             )
 
+    def test_blocks_https_to_http_downgrade(self):
+        # An on-path attacker who can spoof a 302 could chain
+        # ``https://api.github.com`` → ``http://api.github.com`` and capture
+        # the bearer in cleartext. Even though the host is allowlisted, the
+        # scheme downgrade has to be refused.
+        req, fp, code, msg, hdrs = _fake_redirect_inputs(
+            "https://api.github.com/repos/o/r/tarball/HEAD",
+            {"Authorization": "Bearer secret"},
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            self.handler.redirect_request(
+                req, fp, code, msg, hdrs,
+                "http://api.github.com/repos/o/r/tarball/HEAD",
+            )
+        assert "non-HTTPS" in str(exc.value)
+
 
 class TestManifestNoRedirect:
     def setup_method(self):
