@@ -94,11 +94,8 @@ class NBIConfig:
         # TODO: save only diff
         os.makedirs(self.nbi_user_dir, exist_ok=True)
 
-        with open(self.user_config_file, 'w') as file:
-            json.dump(self.user_config, file, indent=2)
-
-        with open(self.user_mcp_file, 'w') as file:
-            json.dump(self.user_mcp, file, indent=2)
+        _atomic_write_json(self.user_config_file, self.user_config)
+        _atomic_write_json(self.user_mcp_file, self.user_mcp)
 
     def get(self, key, default=None):
         return self.user_config.get(key, self.env_config.get(key, default))
@@ -211,3 +208,34 @@ class NBIConfig:
         active_rules = self.active_rules.copy()
         active_rules[filename] = active
         self.set('active_rules', active_rules)
+
+
+def _atomic_write_json(target: str, payload: dict) -> None:
+    """Crash-safe replacement for ``open(target, 'w') + json.dump``.
+
+    Plain truncating writes leave the destination empty (or partial)
+    if the process is killed mid-write — the next launch then chokes on
+    a corrupt config. Write to a sibling tempfile, ``fsync``, and
+    ``os.replace`` so the swap is atomic on POSIX and atomic-ish on
+    Windows.
+    """
+    target_dir = os.path.dirname(target) or '.'
+    fd, tmp_path = _mkstemp_in(target_dir, prefix='.' + os.path.basename(target) + '.', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            json.dump(payload, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, target)
+    except Exception:
+        # Best-effort cleanup — if replace failed the tempfile is dangling.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def _mkstemp_in(directory: str, *, prefix: str, suffix: str):
+    import tempfile
+    return tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=directory)
