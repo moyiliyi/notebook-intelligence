@@ -183,9 +183,11 @@ export function ClaudeSessionPicker(
                   className={`claude-session-picker-item${resuming ? ' busy' : ''}`}
                   onClick={() => handleResume(session)}
                 >
-                  <div className="claude-session-picker-item-preview">
-                    {session.preview || '(no preview available)'}
-                  </div>
+                  {session.preview && (
+                    <div className="claude-session-picker-item-preview">
+                      {session.preview}
+                    </div>
+                  )}
                   <div className="claude-session-picker-item-meta">
                     <span>{formatTimestamp(session.modified_at)}</span>
                     <span>&middot;</span>
