@@ -88,13 +88,17 @@ function SettingsPanelComponent(props: any) {
 
   return (
     <div className="nbi-settings-panel">
-      <div className="nbi-settings-panel-tabs">
-        <SettingsPanelTabsComponent
-          onTabSelected={onTabSelected}
-          activeTab={activeTab}
-        />
-      </div>
-      <div className="nbi-settings-panel-tab-content">
+      <SettingsPanelTabsComponent
+        onTabSelected={onTabSelected}
+        activeTab={activeTab}
+      />
+      <div
+        className="nbi-settings-panel-tab-content"
+        role="tabpanel"
+        id={`nbi-settings-tabpanel-${activeTab}`}
+        aria-labelledby={`nbi-settings-tab-${activeTab}`}
+        tabIndex={0}
+      >
         {activeTab === 'general' && (
           <SettingsPanelComponentGeneral
             onSave={props.onSave}
@@ -132,41 +136,86 @@ function SettingsPanelTabsComponent(props: any) {
     };
   }, []);
 
+  const tabs: { id: string; label: React.ReactNode }[] = [
+    { id: 'general', label: 'General' },
+    {
+      id: 'claude',
+      label: (
+        <>
+          <span
+            className="claude-icon"
+            aria-hidden="true"
+            dangerouslySetInnerHTML={{ __html: claudeSvgStr }}
+          ></span>
+          Claude
+        </>
+      )
+    }
+  ];
+  if (!isInClaudeCodeMode) {
+    tabs.push({ id: 'mcp-servers', label: 'MCP Servers' });
+  }
+
+  const selectTab = (id: string): void => {
+    setActiveTab(id);
+    props.onTabSelected(id);
+  };
+
+  // Arrow-key navigation matches the WAI-ARIA tabs pattern: Up/Down move
+  // between tabs (the list is rendered vertically) and Home/End jump to ends.
+  // Activation is automatic — focus moves and the panel switches together.
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const key = e.key;
+    if (
+      key !== 'ArrowDown' &&
+      key !== 'ArrowUp' &&
+      key !== 'Home' &&
+      key !== 'End'
+    ) {
+      return;
+    }
+    e.preventDefault();
+    const idx = tabs.findIndex(t => t.id === activeTab);
+    let next = idx;
+    if (key === 'ArrowDown') {
+      next = (idx + 1) % tabs.length;
+    } else if (key === 'ArrowUp') {
+      next = (idx - 1 + tabs.length) % tabs.length;
+    } else if (key === 'Home') {
+      next = 0;
+    } else if (key === 'End') {
+      next = tabs.length - 1;
+    }
+    selectTab(tabs[next].id);
+    document.getElementById(`nbi-settings-tab-${tabs[next].id}`)?.focus();
+  };
+
   return (
-    <div>
-      <div
-        className={`nbi-settings-panel-tab ${activeTab === 'general' ? 'active' : ''}`}
-        onClick={() => {
-          setActiveTab('general');
-          props.onTabSelected('general');
-        }}
-      >
-        General
-      </div>
-      <div
-        className={`nbi-settings-panel-tab ${activeTab === 'claude' ? 'active' : ''}`}
-        onClick={() => {
-          setActiveTab('claude');
-          props.onTabSelected('claude');
-        }}
-      >
-        <span
-          className="claude-icon"
-          dangerouslySetInnerHTML={{ __html: claudeSvgStr }}
-        ></span>
-        Claude
-      </div>
-      {!isInClaudeCodeMode && (
-        <div
-          className={`nbi-settings-panel-tab ${activeTab === 'mcp-servers' ? 'active' : ''}`}
-          onClick={() => {
-            setActiveTab('mcp-servers');
-            props.onTabSelected('mcp-servers');
-          }}
-        >
-          MCP Servers
-        </div>
-      )}
+    <div
+      className="nbi-settings-panel-tabs"
+      role="tablist"
+      aria-orientation="vertical"
+      aria-label="Settings sections"
+      onKeyDown={onKeyDown}
+    >
+      {tabs.map(tab => {
+        const selected = activeTab === tab.id;
+        return (
+          <button
+            type="button"
+            key={tab.id}
+            id={`nbi-settings-tab-${tab.id}`}
+            className={`nbi-settings-panel-tab ${selected ? 'active' : ''}`}
+            role="tab"
+            aria-selected={selected}
+            aria-controls={`nbi-settings-tabpanel-${tab.id}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => selectTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -1098,27 +1147,86 @@ function SettingsPanelComponentClaude(props: any) {
     }
   }, [nbiConfig.isInClaudeCodeMode, claudeSubTab]);
 
+  const subTabs: { id: 'settings' | 'skills'; label: string }[] = [
+    { id: 'settings', label: 'Settings' },
+    { id: 'skills', label: 'Skills' }
+  ];
+
+  // Horizontal tablist: Left/Right arrows move between subtabs.
+  const onSubTabKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
+    const key = e.key;
+    if (
+      key !== 'ArrowLeft' &&
+      key !== 'ArrowRight' &&
+      key !== 'Home' &&
+      key !== 'End'
+    ) {
+      return;
+    }
+    e.preventDefault();
+    const idx = subTabs.findIndex(t => t.id === claudeSubTab);
+    let next = idx;
+    if (key === 'ArrowRight') {
+      next = (idx + 1) % subTabs.length;
+    } else if (key === 'ArrowLeft') {
+      next = (idx - 1 + subTabs.length) % subTabs.length;
+    } else if (key === 'Home') {
+      next = 0;
+    } else if (key === 'End') {
+      next = subTabs.length - 1;
+    }
+    setClaudeSubTab(subTabs[next].id);
+    document.getElementById(`nbi-claude-subtab-${subTabs[next].id}`)?.focus();
+  };
+
   return (
     <div className="config-dialog claude-mode-config-dialog">
       {nbiConfig.isInClaudeCodeMode && (
-        <div className="nbi-subtab-bar">
-          <div
-            className={`nbi-subtab ${claudeSubTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setClaudeSubTab('settings')}
-          >
-            Settings
-          </div>
-          <div
-            className={`nbi-subtab ${claudeSubTab === 'skills' ? 'active' : ''}`}
-            onClick={() => setClaudeSubTab('skills')}
-          >
-            Skills
-          </div>
+        <div
+          className="nbi-subtab-bar"
+          role="tablist"
+          aria-label="Claude settings sections"
+          aria-orientation="horizontal"
+          onKeyDown={onSubTabKeyDown}
+        >
+          {subTabs.map(tab => {
+            const selected = claudeSubTab === tab.id;
+            return (
+              <button
+                type="button"
+                key={tab.id}
+                id={`nbi-claude-subtab-${tab.id}`}
+                className={`nbi-subtab ${selected ? 'active' : ''}`}
+                role="tab"
+                aria-selected={selected}
+                aria-controls={`nbi-claude-subtabpanel-${tab.id}`}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => setClaudeSubTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
       )}
-      {claudeSubTab === 'skills' && <SettingsPanelComponentSkills />}
+      {claudeSubTab === 'skills' && (
+        <div
+          role="tabpanel"
+          id="nbi-claude-subtabpanel-skills"
+          aria-labelledby="nbi-claude-subtab-skills"
+          tabIndex={0}
+        >
+          <SettingsPanelComponentSkills />
+        </div>
+      )}
       {claudeSubTab === 'settings' && (
-        <div className="config-dialog-body">
+        <div
+          className="config-dialog-body"
+          role="tabpanel"
+          id="nbi-claude-subtabpanel-settings"
+          aria-labelledby="nbi-claude-subtab-settings"
+          tabIndex={0}
+        >
           <div className="model-config-section">
             <div className="model-config-section-header">
               Enable Claude mode

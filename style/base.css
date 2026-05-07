@@ -1267,6 +1267,12 @@ svg.access-token-warning {
   cursor: pointer;
   padding: 10px;
   border-radius: 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  width: 100%;
 }
 
 .nbi-settings-panel-tab:hover {
@@ -1276,6 +1282,11 @@ svg.access-token-warning {
 .nbi-settings-panel-tab.active {
   background-color: var(--jp-layout-color1);
   font-weight: bold;
+}
+
+.nbi-settings-panel-tab:focus-visible {
+  outline: 2px solid var(--jp-brand-color1);
+  outline-offset: -2px;
 }
 
 .nbi-settings-panel-tab-content {
@@ -1294,12 +1305,22 @@ svg.access-token-warning {
   cursor: pointer;
   padding: 8px 16px;
   border-bottom: 2px solid transparent;
+  border-top: none;
+  border-left: none;
+  border-right: none;
   color: var(--jp-ui-font-color2);
   margin-bottom: -1px;
+  background: none;
+  font: inherit;
 }
 
 .nbi-subtab:hover {
   color: var(--jp-ui-font-color1);
+}
+
+.nbi-subtab:focus-visible {
+  outline: 2px solid var(--jp-brand-color1);
+  outline-offset: -2px;
 }
 
 .nbi-subtab.active {
