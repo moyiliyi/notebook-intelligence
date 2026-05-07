@@ -120,7 +120,7 @@ class TestUrlLoading:
     def test_fetches_over_https(self):
         body = b"skills:\n  - url: https://github.com/org/repo/tree/main/a\n"
         with patch(
-            "notebook_intelligence.skill_manifest.urllib.request.urlopen"
+            "notebook_intelligence.skill_manifest._urlopen_no_redirect"
         ) as mock_open:
             mock_open.return_value = self._fake_response(body)
             manifest = load_manifest("https://example.com/manifest.yaml")
@@ -132,7 +132,7 @@ class TestUrlLoading:
     def test_adds_bearer_token_header(self):
         body = b"skills: []\n"
         with patch(
-            "notebook_intelligence.skill_manifest.urllib.request.urlopen"
+            "notebook_intelligence.skill_manifest._urlopen_no_redirect"
         ) as mock_open:
             mock_open.return_value = self._fake_response(body)
             load_manifest("https://example.com/manifest.yaml", token="abc123")
@@ -142,7 +142,7 @@ class TestUrlLoading:
     def test_url_size_cap_enforced(self):
         big = b"a" * (MAX_MANIFEST_BYTES + 10)
         with patch(
-            "notebook_intelligence.skill_manifest.urllib.request.urlopen"
+            "notebook_intelligence.skill_manifest._urlopen_no_redirect"
         ) as mock_open:
             mock_open.return_value = self._fake_response(big)
             with pytest.raises(ManifestError, match="exceeds"):
@@ -154,7 +154,7 @@ class TestUrlLoading:
             "notebook_intelligence.skill_manifest._get_github_token",
             return_value="gh_fallback",
         ), patch(
-            "notebook_intelligence.skill_manifest.urllib.request.urlopen"
+            "notebook_intelligence.skill_manifest._urlopen_no_redirect"
         ) as mock_open:
             mock_open.return_value = self._fake_response(body)
             load_manifest(
@@ -169,7 +169,7 @@ class TestUrlLoading:
             "notebook_intelligence.skill_manifest._get_github_token",
             return_value="gh_fallback",
         ) as probe, patch(
-            "notebook_intelligence.skill_manifest.urllib.request.urlopen"
+            "notebook_intelligence.skill_manifest._urlopen_no_redirect"
         ) as mock_open:
             mock_open.return_value = self._fake_response(body)
             load_manifest("https://example.com/manifest.yaml")
@@ -183,7 +183,7 @@ class TestUrlLoading:
             "notebook_intelligence.skill_manifest._get_github_token",
             return_value="gh_fallback",
         ) as probe, patch(
-            "notebook_intelligence.skill_manifest.urllib.request.urlopen"
+            "notebook_intelligence.skill_manifest._urlopen_no_redirect"
         ) as mock_open:
             mock_open.return_value = self._fake_response(body)
             load_manifest(

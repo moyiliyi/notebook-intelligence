@@ -38,6 +38,62 @@ MAX_ARCHIVE_BYTES = 10 * 1024 * 1024  # 10 MB on-wire
 MAX_EXTRACTED_BYTES = 20 * 1024 * 1024  # 20 MB after decompression
 FETCH_TIMEOUT_SECONDS = 30
 
+# Hosts a GitHub fetch is allowed to land on after a redirect. The tarball
+# endpoint legitimately 302s api.github.com → codeload.github.com, and
+# release/blob downloads can hop through objects.githubusercontent.com.
+_ALLOWED_REDIRECT_HOSTS = frozenset({
+    "api.github.com",
+    "github.com",
+    "www.github.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+})
+
+
+class _GitHubOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Block redirects to non-GitHub hosts and strip auth on cross-host hops.
+
+    Stock urllib follows any 30x to anywhere. A hijacked DNS entry, a typo'd
+    URL in a deployment manifest, or a malicious repo URL could chain a fetch
+    to an attacker host that captures the bearer token (``GITHUB_TOKEN``) or
+    serves a tarball that bypasses our extraction guards. Restricting the
+    landing host and dropping ``Authorization`` on cross-host redirects closes
+    both vectors.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new_host = (urllib.parse.urlparse(newurl).hostname or "").lower()
+        if new_host not in _ALLOWED_REDIRECT_HOSTS:
+            raise urllib.error.HTTPError(
+                req.full_url,
+                code,
+                f"Refusing redirect to non-GitHub host: {new_host}",
+                headers,
+                fp,
+            )
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is None:
+            return None
+        orig_host = (urllib.parse.urlparse(req.full_url).hostname or "").lower()
+        if new_host != orig_host:
+            for h in [k for k in new_req.headers if k.lower() == "authorization"]:
+                del new_req.headers[h]
+            for h in [k for k in new_req.unredirected_hdrs if k.lower() == "authorization"]:
+                del new_req.unredirected_hdrs[h]
+        return new_req
+
+
+_GITHUB_OPENER = urllib.request.build_opener(_GitHubOnlyRedirectHandler())
+
+
+def _urlopen_github(req, timeout):
+    """Open a GitHub URL with the restricted-redirect opener.
+
+    Indirection point so tests can patch this single symbol instead of
+    swapping out ``urllib.request.urlopen`` globally.
+    """
+    return _GITHUB_OPENER.open(req, timeout=timeout)
+
 
 @dataclass
 class GitHubRef:
@@ -147,7 +203,7 @@ def _fetch_tarball(
     has_token = "Authorization" in headers
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as response:
+        with _urlopen_github(req, timeout=FETCH_TIMEOUT_SECONDS) as response:
             data = response.read(MAX_ARCHIVE_BYTES + 1)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
@@ -207,7 +263,7 @@ def get_latest_commit_sha(
     url = f"https://api.github.com/repos/{owner}/{repo}/commits?{query}"
     req = urllib.request.Request(url, headers=_github_api_headers(override_token=token))
     try:
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as response:
+        with _urlopen_github(req, timeout=FETCH_TIMEOUT_SECONDS) as response:
             data = response.read(64 * 1024)  # commits list is small; hard cap prevents abuse
     except (urllib.error.HTTPError, urllib.error.URLError) as e:
         log.warning("GitHub commits API probe failed for %s/%s: %s", owner, repo, e)

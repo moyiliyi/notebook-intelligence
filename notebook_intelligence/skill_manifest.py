@@ -47,6 +47,35 @@ def _is_github_host(url: str) -> bool:
     return host in _GITHUB_HOSTS or host.endswith(".githubusercontent.com")
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuse any 30x on a manifest fetch.
+
+    The manifest URL is provided by the deployment operator and points to a
+    static config file. A redirect here would mean the operator's URL is
+    out-of-date or — worse — that something on the network is rewriting the
+    request. Either way, silently following along risks shipping a bearer
+    token to an unintended host or installing skills from a substituted
+    manifest. Surface it as an error and let the operator fix the URL.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            f"Refusing redirect on manifest fetch (to {newurl})",
+            headers,
+            fp,
+        )
+
+
+_NO_REDIRECT_OPENER = urllib.request.build_opener(_NoRedirectHandler())
+
+
+def _urlopen_no_redirect(req, timeout):
+    """Open a manifest URL without following redirects (test seam)."""
+    return _NO_REDIRECT_OPENER.open(req, timeout=timeout)
+
+
 class ManifestError(ValueError):
     """Raised when a manifest cannot be loaded or fails validation."""
 
@@ -151,7 +180,7 @@ def _fetch_url(url: str, *, token: Optional[str]) -> str:
         headers["Authorization"] = f"Bearer {effective_token}"
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
+        with _urlopen_no_redirect(req, timeout=FETCH_TIMEOUT_SECONDS) as resp:
             data = resp.read(MAX_MANIFEST_BYTES + 1)
     except urllib.error.HTTPError as e:
         raise ManifestError(f"Manifest fetch failed (HTTP {e.code}): {e.reason}")

@@ -324,7 +324,7 @@ class TestFetchTarballAuth:
             return_value="secret-token",
         ):
             with patch(
-                "notebook_intelligence.skill_github_import.urllib.request.urlopen",
+                "notebook_intelligence.skill_github_import._urlopen_github",
                 side_effect=_capture_headers_urlopen(captured),
             ):
                 _fetch_tarball("owner", "repo", None)
@@ -342,7 +342,7 @@ class TestFetchTarballAuth:
             return_value=None,
         ):
             with patch(
-                "notebook_intelligence.skill_github_import.urllib.request.urlopen",
+                "notebook_intelligence.skill_github_import._urlopen_github",
                 side_effect=_capture_headers_urlopen(captured),
             ):
                 _fetch_tarball("owner", "repo", None)
@@ -356,7 +356,7 @@ class TestFetchTarballAuth:
             return_value=None,
         ):
             with patch(
-                "notebook_intelligence.skill_github_import.urllib.request.urlopen",
+                "notebook_intelligence.skill_github_import._urlopen_github",
                 side_effect=self._http_error(401),
             ):
                 with pytest.raises(ValueError, match="requires authentication"):
@@ -368,7 +368,7 @@ class TestFetchTarballAuth:
             return_value="bad-token",
         ):
             with patch(
-                "notebook_intelligence.skill_github_import.urllib.request.urlopen",
+                "notebook_intelligence.skill_github_import._urlopen_github",
                 side_effect=self._http_error(403),
             ):
                 with pytest.raises(ValueError, match="rejected the token"):
@@ -380,7 +380,7 @@ class TestFetchTarballAuth:
             return_value=None,
         ):
             with patch(
-                "notebook_intelligence.skill_github_import.urllib.request.urlopen",
+                "notebook_intelligence.skill_github_import._urlopen_github",
                 side_effect=self._http_error(404),
             ):
                 with pytest.raises(ValueError, match="private repos require"):
@@ -392,7 +392,7 @@ class TestFetchTarballAuth:
             return_value="some-token",
         ):
             with patch(
-                "notebook_intelligence.skill_github_import.urllib.request.urlopen",
+                "notebook_intelligence.skill_github_import._urlopen_github",
                 side_effect=self._http_error(404),
             ):
                 with pytest.raises(ValueError) as exc_info:
