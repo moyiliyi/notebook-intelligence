@@ -951,24 +951,21 @@ class FileUploadHandler(APIHandler):
 
 
 class ClaudeSessionsListHandler(APIHandler):
-    """Lists Claude Code sessions across all projects.
+    """Lists Claude Code sessions for both pickers.
 
-    Both pickers (chat sidebar and launcher tile) consume this single
-    endpoint so they cannot disagree on previews. The chat sidebar
-    filters client-side to ``current_sessions_dir``; the launcher tile
-    shows everything. ``current_cwd`` is the realpath-resolved Jupyter
-    root the chat picker pairs with the session id to render
-    ``cd ... && claude --resume <id>``.
+    Both pickers (chat sidebar and launcher tile) consume this endpoint
+    via the same ``list_all_sessions`` backend so they cannot disagree on
+    previews. ``?scope=cwd`` filters the response down to sessions whose
+    transcript lives under the current Jupyter cwd (the chat sidebar
+    case); ``?scope=all`` (the default) returns every project's sessions
+    (the launcher tile case).
+
+    ``current_cwd`` is the realpath-resolved Jupyter root the chat picker
+    pairs with the session id to render ``cd ... && claude --resume <id>``.
 
     Guarded by ``is_claude_code_mode`` because both consumers are
     Claude-Code-specific surfaces — the launcher tile literally launches
     the ``claude`` CLI in a terminal.
-
-    Note: ``current_sessions_dir`` exposes the encoded
-    ``~/.claude/projects/<encoded-cwd>`` path to the client. Acceptable
-    because the endpoint is already authenticated and Claude-mode-gated;
-    the alternative (per-session ``in_current_cwd`` boolean) inflates the
-    response without simplifying anything.
     """
 
     @tornado.web.authenticated
@@ -978,15 +975,18 @@ class ClaudeSessionsListHandler(APIHandler):
             self.finish(json.dumps({"error": "Claude Code mode is not enabled"}))
             return
 
+        scope = self.get_query_argument("scope", "all")
         try:
             cwd = get_jupyter_root_dir()
             sessions = list_all_claude_sessions(cwd=cwd)
+            if scope == "cwd" and cwd:
+                target = str(get_claude_sessions_dir(cwd))
+                sessions = [
+                    s for s in sessions if os.path.dirname(s.path) == target
+                ]
             self.finish(json.dumps({
                 "sessions": [asdict(s) for s in sessions],
                 "current_cwd": os.path.realpath(cwd) if cwd else "",
-                "current_sessions_dir": (
-                    str(get_claude_sessions_dir(cwd)) if cwd else ""
-                ),
             }))
         except Exception as e:
             log.exception("Failed to list Claude sessions")

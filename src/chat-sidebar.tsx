@@ -1933,7 +1933,9 @@ function SidebarComponent(props: any) {
   }, [prefixSuggestions]);
 
   useEffect(() => {
-    if (!showPopover) return;
+    if (!showPopover) {
+      return;
+    }
     const handleClickOutside = (event: MouseEvent) => {
       if (
         !autocompleteRef.current?.contains(event.target as Node) &&
@@ -1954,10 +1956,7 @@ function SidebarComponent(props: any) {
     if (trimmedPrompt === '@' || trimmedPrompt === '/') {
       setShowPopover(true);
       filterPrefixSuggestions(trimmedPrompt);
-    } else if (
-      trimmedPrompt.startsWith('@') ||
-      trimmedPrompt.startsWith('/')
-    ) {
+    } else if (trimmedPrompt.startsWith('@') || trimmedPrompt.startsWith('/')) {
       filterPrefixSuggestions(trimmedPrompt);
     } else {
       setShowPopover(false);

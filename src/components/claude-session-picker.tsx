@@ -10,11 +10,7 @@ import React, {
 import { VscCheck, VscClose, VscCopy, VscHistory } from 'react-icons/vsc';
 
 import { IClaudeSessionInfo, IClaudeSessionList, NBIAPI } from '../api';
-import {
-  buildResumeCommand,
-  filterSessionsToDir,
-  writeTextToClipboard
-} from '../utils';
+import { buildResumeCommand, writeTextToClipboard } from '../utils';
 
 export interface IClaudeSessionPickerProps {
   onResume: (session: IClaudeSessionInfo) => void;
@@ -63,15 +59,14 @@ export function ClaudeSessionPicker(
 
   useEffect(() => {
     let cancelled = false;
-    const fetch = props.fetchSessions ?? (() => NBIAPI.listClaudeSessions());
+    const fetch =
+      props.fetchSessions ?? (() => NBIAPI.listClaudeSessions('cwd'));
     fetch()
       .then(result => {
         if (cancelled) {
           return;
         }
-        setSessions(
-          filterSessionsToDir(result.sessions, result.currentSessionsDir)
-        );
+        setSessions(result.sessions);
         setCurrentCwd(result.currentCwd);
         setLoading(false);
       })
