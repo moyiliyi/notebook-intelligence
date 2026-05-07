@@ -141,7 +141,15 @@ def _list_sessions_in_dir(
 def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
     """Read metadata from a single transcript file.
 
-    Returns ``None`` if the file is empty or has no user messages.
+    Returns a ``ClaudeSessionInfo`` whenever the file contains at least
+    one user message, even if every message is skippable — in that case
+    ``preview`` is empty and the picker UI relies on the session id +
+    timestamp meta row instead of rendering a literal "/exit"-style line
+    (issue #187).
+
+    Returns ``None`` for transcripts that aren't useful to resume: the
+    file is unreadable, starts with a sidechain record (subagent probe),
+    or contains no user messages at all (snapshot-only).
     """
     try:
         stat = path.stat()
@@ -150,6 +158,7 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
         return None
 
     preview = ""
+    saw_user_message = False
     first_parsed_obj = True
 
     try:
@@ -173,6 +182,7 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
                         return None
                 if not _is_user_message(obj):
                     continue
+                saw_user_message = True
                 if _is_skippable_user_message(obj):
                     continue
                 preview = _extract_preview(obj)
@@ -181,9 +191,8 @@ def _read_session_info(path: Path) -> Optional[ClaudeSessionInfo]:
         log.warning("Could not read Claude session file %s: %s", path, exc)
         return None
 
-    if not preview:
-        # Empty or non-conversation file (e.g. only snapshots). Skip it so
-        # the picker doesn't show a meaningless row.
+    if not saw_user_message:
+        # Pure snapshot / non-conversation file — drop, nothing to resume.
         return None
 
     return ClaudeSessionInfo(
@@ -352,12 +361,13 @@ def list_all_sessions(
         except OSError:
             continue
         preview = data["preview"]
-        # Fall back to a transcript scan when display is skippable so
-        # both pickers converge on the same preview (issue #181).
+        # When display is skippable, prefer a transcript-derived preview;
+        # if neither yields anything meaningful, leave preview empty so
+        # the picker UI can show only the session id + timestamp instead
+        # of a literal "/exit"-style row (issues #181, #187).
         if _is_skippable_text(preview):
             transcript_info = _read_session_info(jsonl_path)
-            if transcript_info is not None and transcript_info.preview:
-                preview = transcript_info.preview
+            preview = transcript_info.preview if transcript_info else ""
         preview = _truncate_preview(preview)
         sessions.append(ClaudeSessionInfo(
             session_id=session_id,

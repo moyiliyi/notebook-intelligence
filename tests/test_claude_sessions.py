@@ -268,18 +268,21 @@ class TestListSessions:
         result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
         assert [s.preview for s in result] == ["Hello world"]
 
-    def test_falls_back_to_no_preview_when_only_preamble(
+    def test_keeps_skippable_only_session_with_empty_preview(
         self, sessions_dir, fake_claude_home, project_cwd
     ):
-        # Pure-preamble file (e.g. session created but no real prompt yet)
-        # should be filtered out — no preview to show.
+        # Sessions whose user messages are all skippable (e.g. only the
+        # NBI preamble, or only "/exit") are still resumable, so they're
+        # listed with an empty preview rather than dropped. The picker
+        # UI shows just the session id + timestamp (issue #187).
         preamble = _user_line(
             "real", "Additional context: Current directory open in Jupyter is: ''"
         )
         _write_jsonl(sessions_dir / "real.jsonl", [preamble])
 
         result = _list_sessions_in_dir(project_cwd, claude_home=str(fake_claude_home))
-        assert result == []
+        assert len(result) == 1
+        assert result[0].preview == ""
 
     def test_skips_claude_code_command_envelopes(
         self, sessions_dir, fake_claude_home, project_cwd
@@ -551,12 +554,13 @@ class TestListAllSessions:
         match = next(s for s in result if s.session_id == session_id)
         assert match.preview == "Plot the closing prices for AAPL"
 
-    def test_keeps_skippable_display_when_transcript_has_nothing_better(
+    def test_empty_preview_when_display_and_transcript_both_skippable(
         self, fake_claude_home, sessions_dir, project_cwd
     ):
-        # Session whose display AND transcript are both skippable should
-        # still appear in the picker — we'd rather show "/exit" than drop
-        # a resumable session entirely.
+        # Session whose history.jsonl display AND transcript are both
+        # skippable is still resumable, so it's listed — but with an empty
+        # preview. The picker UI relies on the session id + timestamp meta
+        # row instead of rendering a literal "/exit" line (issue #187).
         session_id = "barren12"
         jsonl_path = sessions_dir / f"{session_id}.jsonl"
         _write_jsonl(jsonl_path, [_user_line(session_id, "/clear")])
@@ -567,7 +571,7 @@ class TestListAllSessions:
 
         result = list_all_sessions(cwd=project_cwd, claude_home=str(fake_claude_home))
         match = next(s for s in result if s.session_id == session_id)
-        assert match.preview == "/exit"
+        assert match.preview == ""
 
     def test_keeps_history_display_when_meaningful(
         self, fake_claude_home, sessions_dir, project_cwd
