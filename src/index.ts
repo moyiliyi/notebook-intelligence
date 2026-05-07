@@ -1069,11 +1069,14 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
 
     // Waits for bash's first prompt before sending, avoiding the race condition
     // where the command is sent before the shell has started.
-    const launchClaudeInTerminal = async (command: string): Promise<void> => {
+    const launchClaudeInTerminal = async (
+      command: string,
+      cwd?: string
+    ): Promise<void> => {
       const mgr = app.serviceManager.terminals;
       const before = new Set([...mgr.running()].map((s: any) => s.name));
       try {
-        await app.commands.execute('terminal:create-new');
+        await app.commands.execute('terminal:create-new', cwd ? { cwd } : {});
       } catch {
         return;
       }
@@ -1137,7 +1140,10 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         });
         const result = await dialog.launch();
         if (result.button.accept) {
-          launchClaudeInTerminal('claude');
+          // New Session: open the terminal at whatever subdirectory the file
+          // browser is currently viewing, mirroring how Jupyter's own
+          // terminal launcher behaves (issue #182).
+          launchClaudeInTerminal('claude', defaultBrowser?.model.path);
         }
       }
     });
