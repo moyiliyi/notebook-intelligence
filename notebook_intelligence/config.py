@@ -3,7 +3,9 @@
 import json
 import logging
 import os
+import stat
 import sys
+import tempfile
 from typing import Optional
 
 from notebook_intelligence.feature_flags import (
@@ -218,15 +220,44 @@ def _atomic_write_json(target: str, payload: dict) -> None:
     a corrupt config. Write to a sibling tempfile, ``fsync``, and
     ``os.replace`` so the swap is atomic on POSIX and atomic-ish on
     Windows.
+
+    Symlink-preserving: a user who symlinks ``~/.jupyter/nbi/config.json``
+    to a shared config file expects ``save()`` to update the link's
+    target, not replace the link itself. Resolve via ``realpath`` first.
+
+    Mode-preserving: ``mkstemp`` returns a 0o600 file; if the existing
+    config has different permissions (e.g. 0o644 for a shared install),
+    re-apply them after the swap so the user's chmod isn't silently
+    undone.
+
+    Durability: ``fsync`` the tempfile, then ``fsync`` the target's
+    parent directory on POSIX so the rename itself survives a crash.
     """
-    target_dir = os.path.dirname(target) or '.'
-    fd, tmp_path = _mkstemp_in(target_dir, prefix='.' + os.path.basename(target) + '.', suffix='.tmp')
+    real_target = os.path.realpath(target)
+    target_dir = os.path.dirname(real_target) or '.'
+    existing_mode = None
+    try:
+        existing_mode = stat.S_IMODE(os.stat(real_target).st_mode)
+    except FileNotFoundError:
+        pass
+    fd, tmp_path = tempfile.mkstemp(
+        prefix='.' + os.path.basename(real_target) + '.',
+        suffix='.tmp',
+        dir=target_dir,
+    )
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as fh:
             json.dump(payload, fh, indent=2)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_path, target)
+        if existing_mode is not None:
+            try:
+                os.chmod(tmp_path, existing_mode)
+            except OSError:
+                # Some filesystems (FAT, certain network mounts) reject chmod;
+                # the swap itself is still safe, just lose the mode bits.
+                pass
+        os.replace(tmp_path, real_target)
     except Exception:
         # Best-effort cleanup — if replace failed the tempfile is dangling.
         try:
@@ -234,8 +265,16 @@ def _atomic_write_json(target: str, payload: dict) -> None:
         except OSError:
             pass
         raise
-
-
-def _mkstemp_in(directory: str, *, prefix: str, suffix: str):
-    import tempfile
-    return tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=directory)
+    # ``os.replace`` makes the new inode visible, but until the directory
+    # entry is fsynced a power-loss can still leave the rename unrecorded
+    # on POSIX. Windows has no ``O_RDONLY`` directory descriptor, so skip
+    # there and rely on its rename semantics.
+    if hasattr(os, 'O_DIRECTORY'):
+        try:
+            dir_fd = os.open(target_dir, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass

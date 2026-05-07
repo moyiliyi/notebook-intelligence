@@ -76,3 +76,29 @@ class TestAtomicWriteJson:
         _atomic_write_json(str(target), {"key": "value"})
         text = target.read_text()
         assert "\n" in text  # indented, not single-line
+
+    def test_writes_through_symlink(self, tmp_path):
+        # User pointed config.json at a shared location via symlink.
+        # ``save()`` must update the linked-to file, not replace the link.
+        real_dir = tmp_path / "shared"
+        real_dir.mkdir()
+        real_target = real_dir / "config.json"
+        real_target.write_text(json.dumps({"old": True}))
+        link = tmp_path / "config.json"
+        link.symlink_to(real_target)
+
+        _atomic_write_json(str(link), {"new": True})
+
+        assert link.is_symlink()
+        assert json.loads(real_target.read_text()) == {"new": True}
+
+    def test_preserves_existing_file_mode(self, tmp_path):
+        import os as _os
+        target = tmp_path / "config.json"
+        target.write_text(json.dumps({"old": True}))
+        _os.chmod(target, 0o640)
+
+        _atomic_write_json(str(target), {"new": True})
+
+        # Mode bits preserved across the atomic swap.
+        assert (target.stat().st_mode & 0o777) == 0o640
