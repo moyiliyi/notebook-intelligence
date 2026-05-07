@@ -16,7 +16,7 @@ export function LauncherPicker({
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
-    NBIAPI.listClaudeSessions()
+    NBIAPI.listClaudeSessions('all')
       .then(result => {
         setSessions(result.sessions);
         setLoading(false);
