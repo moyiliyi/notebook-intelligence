@@ -713,6 +713,7 @@ pre:has(.code-block-header) {
 /* Claude Code session picker (used inside Dialog from launcher tile) */
 .nbi-claude-code-picker {
   min-width: 480px;
+  height: 400px;
 }
 
 .nbi-claude-code-picker-body {
@@ -720,7 +721,7 @@ pre:has(.code-block-header) {
   flex-direction: column;
   gap: 0;
   width: 500px;
-  height: 400px;
+  height: 100%;
 }
 
 .nbi-claude-code-picker-search {
