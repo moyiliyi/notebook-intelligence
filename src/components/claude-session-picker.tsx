@@ -185,7 +185,6 @@ export function ClaudeSessionPicker(
                   )}
                   <div className="claude-session-picker-item-meta">
                     <span>{formatTimestamp(session.modified_at)}</span>
-                    <span>&middot;</span>
                     <span
                       className="claude-session-picker-item-id"
                       title={session.session_id}

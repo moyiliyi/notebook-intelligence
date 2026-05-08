@@ -2251,6 +2251,8 @@ svg.access-token-warning {
 }
 
 .claude-session-picker-item-id {
+  flex-grow: 1;
+  text-align: right;
   font-family: var(--jp-code-font-family);
 }
 
