@@ -15,6 +15,8 @@ NBI is free and open-source. Connect it to a free or paid LLM provider of your c
   - [Code generation with inline chat](#code-generation-with-inline-chat)
   - [Auto-complete](#auto-complete)
   - [Chat interface](#chat-interface)
+  - [Cell output actions](#cell-output-actions)
+  - [Notebook toolbar generation](#notebook-toolbar-generation)
 - [Configuration](#configuration)
   - [Configuration files](#configuration-files)
   - [Remembering GitHub Copilot login](#remembering-github-copilot-login)
@@ -87,6 +89,10 @@ If the Claude Code CLI is on `PATH`, NBI launches it automatically. To override 
 
 When Claude mode is on, the chat sidebar shows a history icon next to the gear. Click it to list the Claude Code sessions recorded for the current working directory (the same transcripts the Claude Code CLI stores under `~/.claude/projects/`). Selecting a session reconnects via `resume`, so the next message you send continues that transcript with full prior context.
 
+#### Claude Code launcher tile
+
+When Claude mode is enabled and the Claude CLI is available, the JupyterLab launcher (the panel that opens with new tabs) shows a **Claude Code** tile alongside the standard kernel launchers. Clicking it opens a session picker — search across past transcripts and resume one in a fresh terminal, or start a new session in the file browser's active subdirectory. Session IDs are copyable from the picker for paste into a `claude --resume <id>` command.
+
 ### Agent mode
 
 In Agent mode, the built-in AI agent creates, edits, and executes notebooks for you interactively. It can detect issues in cells and fix them.
@@ -110,6 +116,22 @@ Auto-complete suggestions are shown as you type. `Tab` accepts. NBI provides aut
 ### Chat interface
 
 <img src="media/copilot-chat.gif" alt="Chat interface" width=600 />
+
+You can paste or attach images alongside a chat prompt — the image goes to the model as input when the active model supports vision.
+
+### Cell output actions
+
+Right-click a cell output (or hover for the toolbar) to send it straight into the chat as context:
+
+- **Explain cell errors** — surfaces a "Troubleshoot errors in output" entry on cells that raised; opens a chat turn with the traceback attached.
+- **Ask about cell outputs** — attaches the output as structured context for a follow-up question. Includes images for vision-capable models.
+- **Show output toolbar** — the floating toolbar above each output with quick **Explain** / **Ask** / **Troubleshoot** actions.
+
+Each is per-user toggleable from Settings (saved as `enable_explain_error`, `enable_output_followup`, `enable_output_toolbar` in `config.json`, default on) and admin-lockable via `NBI_EXPLAIN_ERROR_POLICY` / `NBI_OUTPUT_FOLLOWUP_POLICY` / `NBI_OUTPUT_TOOLBAR_POLICY`.
+
+### Notebook toolbar generation
+
+Active notebooks show a sparkle icon on the toolbar. Click it to open a popover that scopes the generation request to that specific notebook — handy for multi-notebook sessions where you don't want the chat sidebar to compete for context.
 
 ## Configuration
 
