@@ -52,6 +52,10 @@ def _make_handler(handler_cls, body: bytes = b"", query_args: dict | None = None
     handler._parse_json_body = lambda: SkillsBaseHandler._parse_json_body(handler)
     handler._bundle_rel_path = lambda: SkillsBaseHandler._bundle_rel_path(handler)
     handler._error = lambda exc: SkillsBaseHandler._error(handler, exc)
+    handler._reject_if_github_import_disabled = (
+        lambda: SkillsBaseHandler._reject_if_github_import_disabled(handler)
+    )
+    handler.allow_github_skill_import = SkillsBaseHandler.allow_github_skill_import
     return handler
 
 
@@ -297,6 +301,29 @@ class TestSkillsImportHandlers:
         ):
             SkillsImportHandler.post(handler)
         handler.set_status.assert_called_with(409)
+
+    def test_preview_returns_403_when_disabled(self, skill_manager):
+        handler = _make_handler(
+            SkillsImportPreviewHandler,
+            body=json.dumps({"url": "https://github.com/owner/repo"}).encode(),
+        )
+        handler.allow_github_skill_import = False
+        SkillsImportPreviewHandler.post(handler)
+        handler.set_status.assert_called_with(403)
+        body = _parse_response(handler)
+        assert "disabled" in body["error"].lower()
+
+    def test_import_returns_403_when_disabled(self, skill_manager):
+        handler = _make_handler(
+            SkillsImportHandler,
+            body=json.dumps({
+                "url": "https://github.com/owner/repo",
+                "scope": "user",
+            }).encode(),
+        )
+        handler.allow_github_skill_import = False
+        SkillsImportHandler.post(handler)
+        handler.set_status.assert_called_with(403)
 
 
 class TestSkillBundleFileHandler:

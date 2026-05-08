@@ -286,6 +286,10 @@ export class NBIConfig {
     return this.capabilities.chat_feedback_enabled === true;
   }
 
+  get allowGithubSkillImport(): boolean {
+    return this.capabilities.allow_github_skill_import !== false;
+  }
+
   get cellOutputFeatures(): ICellOutputFeatures {
     const v = this.capabilities.cell_output_features ?? {};
     return {

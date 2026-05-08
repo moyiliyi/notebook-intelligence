@@ -279,6 +279,7 @@ class GetCapabilitiesHandler(APIHandler):
     disabled_providers = []
     allow_enabling_providers_with_env = False
     enable_chat_feedback = False
+    allow_github_skill_import = True
     feature_policies = {}
     string_overrides = {}
 
@@ -365,6 +366,7 @@ class GetCapabilitiesHandler(APIHandler):
             "claude_cli_available": shutil.which("claude") is not None,
             "default_chat_mode": nbi_config.default_chat_mode,
             "chat_feedback_enabled": self.enable_chat_feedback,
+            "allow_github_skill_import": self.allow_github_skill_import,
             "cell_output_features": _build_cell_output_features_response(
                 self.feature_policies.get("explain_error", POLICY_USER_CHOICE),
                 self.feature_policies.get("output_followup", POLICY_USER_CHOICE),
@@ -654,9 +656,18 @@ class RulesReloadHandler(APIHandler):
 class SkillsBaseHandler(APIHandler):
     """Shared helpers for skills endpoints."""
 
+    allow_github_skill_import = True
+
     @property
     def skill_manager(self):
         return ai_service_manager.get_skill_manager()
+
+    def _reject_if_github_import_disabled(self) -> bool:
+        if self.allow_github_skill_import:
+            return False
+        self.set_status(403)
+        self.finish(json.dumps({"error": "GitHub Skill import is disabled by configuration"}))
+        return True
 
     def _error(self, exc):
         if isinstance(exc, FileExistsError):
@@ -765,6 +776,8 @@ class SkillDetailHandler(SkillsBaseHandler):
 class SkillsImportPreviewHandler(SkillsBaseHandler):
     @tornado.web.authenticated
     def post(self):
+        if self._reject_if_github_import_disabled():
+            return
         data = self._parse_json_body()
         if data is None:
             return
@@ -783,6 +796,8 @@ class SkillsImportPreviewHandler(SkillsBaseHandler):
 class SkillsImportHandler(SkillsBaseHandler):
     @tornado.web.authenticated
     def post(self):
+        if self._reject_if_github_import_disabled():
+            return
         data = self._parse_json_body()
         if data is None:
             return
@@ -1653,6 +1668,16 @@ class NotebookIntelligence(ExtensionApp):
         config=True,
     )
 
+    allow_github_skill_import = Bool(
+        default_value=True,
+        help="""
+        Allow importing Skills from GitHub via the Skills panel. Set to False
+        to hide the "Import from GitHub" affordance and reject backend imports.
+        """,
+        allow_none=True,
+        config=True,
+    )
+
     explain_error_policy = TraitletEnum(
         list(VALID_POLICIES),
         default_value=POLICY_USER_CHOICE,
@@ -1903,6 +1928,8 @@ class NotebookIntelligence(ExtensionApp):
         GetCapabilitiesHandler.disabled_providers = self.disabled_providers
         GetCapabilitiesHandler.allow_enabling_providers_with_env = self.allow_enabling_providers_with_env
         GetCapabilitiesHandler.enable_chat_feedback = self.enable_chat_feedback
+        GetCapabilitiesHandler.allow_github_skill_import = self.allow_github_skill_import
+        SkillsBaseHandler.allow_github_skill_import = self.allow_github_skill_import
         self._publish_policies(feature_policies, string_overrides)
         NotebookIntelligence.handlers = [
             (route_pattern_capabilities, GetCapabilitiesHandler),

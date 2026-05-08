@@ -84,6 +84,7 @@ The full surface, in one table.
 | `allow_enabling_tools_with_env`     | Bool | `False`                     | traitlet                           | If true, `NBI_ENABLED_BUILTIN_TOOLS` re-enables hidden tools per pod.                                                                                               |
 | `NBI_ENABLED_BUILTIN_TOOLS`         | csv  | unset                       | env                                | Comma-separated tool IDs to re-enable. Effective only when `allow_enabling_tools_with_env=True`.                                                                    |
 | `enable_chat_feedback`              | Bool | `False`                     | traitlet                           | Enables thumbs-up/down UI in chat and emits in-process `telemetry` events.                                                                                          |
+| `allow_github_skill_import`         | Bool | `True`                      | traitlet                           | When `False`, hides the **Import from GitHub** button in the Skills panel and rejects `/skills/import` POSTs with 403. Does not affect the managed-skills reconciler. |
 | `skills_manifest`                   | str  | `""`                        | traitlet                           | URL or filesystem path to a managed-skills manifest. See [`docs/skills.md`](skills.md#managed-skills-via-an-org-manifest).                                          |
 | `NBI_SKILLS_MANIFEST`               | str  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                |
 | `skills_manifest_interval`          | int  | `86400`                     | traitlet                           | Seconds between reconciles.                                                                                                                                         |
@@ -314,6 +315,14 @@ NBI_ENABLED_BUILTIN_TOOLS=nbi-notebook-execute,nbi-python-file-edit
 ```
 
 NBI does not currently support an explicit allowlist mode (`allowed_providers`, `allowed_tools`). A new built-in provider added in a minor release would auto-enable for users with `disabled_providers=[]`. If this matters for your compliance posture, pin to specific NBI versions and review changelog entries before upgrading. Tracked as a feature request.
+
+### Disabling user-initiated GitHub Skill imports
+
+```python
+c.NotebookIntelligence.allow_github_skill_import = False
+```
+
+Hides the **Import from GitHub** button in the Skills panel and rejects POSTs to `/notebook-intelligence/skills/import` and `/notebook-intelligence/skills/import/preview` with HTTP 403. This does **not** disable the [managed-skills reconciler](#managed-claude-skills-token); admin-curated skills delivered via `NBI_SKILLS_MANIFEST` continue to install. Use this when you want to allow only org-vetted skills.
 
 ---
 
