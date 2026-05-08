@@ -425,12 +425,7 @@ function readFileAsDataURL(file: File): Promise<string> {
 
 const MAX_VISIBLE_WORKSPACE_FILES = 50;
 const MAX_WORKSPACE_FILE_SCAN_COUNT = 1500;
-const SKIPPED_WORKSPACE_DIRECTORIES = new Set([
-  '.git',
-  '.ipynb_checkpoints',
-  '__pycache__',
-  'node_modules'
-]);
+const SKIPPED_WORKSPACE_DIRECTORIES = new Set(['__pycache__', 'node_modules']);
 
 function countContentLines(content: string): number {
   if (content === '') {
@@ -1157,6 +1152,10 @@ function SidebarComponent(props: any) {
 
         for (const entry of entries) {
           if (!entry?.path || !entry?.name) {
+            continue;
+          }
+
+          if (entry.name.startsWith('.')) {
             continue;
           }
 
