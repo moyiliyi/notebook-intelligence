@@ -1603,11 +1603,11 @@ class NotebookIntelligence(ExtensionApp):
     root_dir = ''
 
     disabled_providers = List(
-        trait=Unicode,
+        trait=Unicode(),
         default_value=None,
         help="""
         List of LLM providers to disable. Valid provider IDs: github-copilot, openai-compatible, litellm-compatible, ollama.
-        
+
         Example: ['ollama', 'litellm-compatible']
         """,
         allow_none=True,
@@ -1624,7 +1624,7 @@ class NotebookIntelligence(ExtensionApp):
     )
 
     disabled_tools = List(
-        trait=Unicode,
+        trait=Unicode(),
         default_value=None,
         help="""
         List of built-in tools to disable. Valid tool names: nbi-notebook-edit, nbi-notebook-execute, nbi-python-file-edit, nbi-file-edit, nbi-file-read, nbi-command-execute.
