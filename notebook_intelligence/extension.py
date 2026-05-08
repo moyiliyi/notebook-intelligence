@@ -155,6 +155,28 @@ def _resolve_policy_with_env(env_var_name: str, traitlet_value: str) -> str:
     return traitlet_value
 
 
+_TRUE_VALUES = frozenset({"true", "1", "yes", "on"})
+_FALSE_VALUES = frozenset({"false", "0", "no", "off"})
+
+
+def _resolve_bool_with_env(env_var_name: str, traitlet_value: bool) -> bool:
+    """Resolve a boolean admin gate: env var wins if recognized, else traitlet."""
+    env_value = os.environ.get(env_var_name, "").strip().lower()
+    if not env_value:
+        return bool(traitlet_value)
+    if env_value in _TRUE_VALUES:
+        return True
+    if env_value in _FALSE_VALUES:
+        return False
+    log.warning(
+        "Ignoring %s=%r: must be one of %s",
+        env_var_name,
+        env_value,
+        ", ".join(sorted(_TRUE_VALUES | _FALSE_VALUES)),
+    )
+    return bool(traitlet_value)
+
+
 # Single source of truth for the boolean policies. Each entry is
 # ``(policy_name, env_var, traitlet_attr)``. Drives env-var resolution, the
 # capabilities response, and the lock-rejection set in ConfigHandler.
@@ -1673,6 +1695,7 @@ class NotebookIntelligence(ExtensionApp):
         help="""
         Allow importing Skills from GitHub via the Skills panel. Set to False
         to hide the "Import from GitHub" affordance and reject backend imports.
+        Overridden by the NBI_ALLOW_GITHUB_SKILL_IMPORT env var.
         """,
         allow_none=True,
         config=True,
@@ -1928,8 +1951,11 @@ class NotebookIntelligence(ExtensionApp):
         GetCapabilitiesHandler.disabled_providers = self.disabled_providers
         GetCapabilitiesHandler.allow_enabling_providers_with_env = self.allow_enabling_providers_with_env
         GetCapabilitiesHandler.enable_chat_feedback = self.enable_chat_feedback
-        GetCapabilitiesHandler.allow_github_skill_import = self.allow_github_skill_import
-        SkillsBaseHandler.allow_github_skill_import = self.allow_github_skill_import
+        allow_github_skill_import = _resolve_bool_with_env(
+            "NBI_ALLOW_GITHUB_SKILL_IMPORT", self.allow_github_skill_import
+        )
+        GetCapabilitiesHandler.allow_github_skill_import = allow_github_skill_import
+        SkillsBaseHandler.allow_github_skill_import = allow_github_skill_import
         self._publish_policies(feature_policies, string_overrides)
         NotebookIntelligence.handlers = [
             (route_pattern_capabilities, GetCapabilitiesHandler),

@@ -85,6 +85,7 @@ The full surface, in one table.
 | `NBI_ENABLED_BUILTIN_TOOLS`         | csv  | unset                       | env                                | Comma-separated tool IDs to re-enable. Effective only when `allow_enabling_tools_with_env=True`.                                                                    |
 | `enable_chat_feedback`              | Bool | `False`                     | traitlet                           | Enables thumbs-up/down UI in chat and emits in-process `telemetry` events.                                                                                          |
 | `allow_github_skill_import`         | Bool | `True`                      | traitlet                           | When `False`, hides the **Import from GitHub** button in the Skills panel and rejects `/skills/import` POSTs with 403. Does not affect the managed-skills reconciler. |
+| `NBI_ALLOW_GITHUB_SKILL_IMPORT`     | bool | unset                       | env (overrides traitlet)           | Per-pod override for `allow_github_skill_import`. Accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` (case-insensitive). Useful for varying the policy across KubeSpawner profiles. |
 | `skills_manifest`                   | str  | `""`                        | traitlet                           | URL or filesystem path to a managed-skills manifest. See [`docs/skills.md`](skills.md#managed-skills-via-an-org-manifest).                                          |
 | `NBI_SKILLS_MANIFEST`               | str  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                |
 | `skills_manifest_interval`          | int  | `86400`                     | traitlet                           | Seconds between reconciles.                                                                                                                                         |
@@ -323,6 +324,14 @@ c.NotebookIntelligence.allow_github_skill_import = False
 ```
 
 Hides the **Import from GitHub** button in the Skills panel and rejects POSTs to `/notebook-intelligence/skills/import` and `/notebook-intelligence/skills/import/preview` with HTTP 403. This does **not** disable the [managed-skills reconciler](#managed-claude-skills-token); admin-curated skills delivered via `NBI_SKILLS_MANIFEST` continue to install. Use this when you want to allow only org-vetted skills.
+
+To vary the policy per KubeSpawner profile, override at pod startup:
+
+```bash
+NBI_ALLOW_GITHUB_SKILL_IMPORT=false
+```
+
+The env var wins over the traitlet and is resolved at server startup. Unrecognized values are logged and ignored (the traitlet wins). Recognized values: `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`, case-insensitive.
 
 ---
 

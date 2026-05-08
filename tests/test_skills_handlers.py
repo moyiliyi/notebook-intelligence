@@ -326,6 +326,30 @@ class TestSkillsImportHandlers:
         handler.set_status.assert_called_with(403)
 
 
+class TestResolveBoolWithEnv:
+    @pytest.mark.parametrize("value", ["true", "TRUE", "1", "yes", "On"])
+    def test_truthy_env_overrides_false_traitlet(self, value):
+        with patch.dict("os.environ", {"NBI_TEST_FLAG": value}):
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is True
+
+    @pytest.mark.parametrize("value", ["false", "FALSE", "0", "no", "Off"])
+    def test_falsy_env_overrides_true_traitlet(self, value):
+        with patch.dict("os.environ", {"NBI_TEST_FLAG": value}):
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is False
+
+    def test_unset_env_returns_traitlet(self):
+        with patch.dict("os.environ", {}, clear=False):
+            import os as _os
+            _os.environ.pop("NBI_TEST_FLAG", None)
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is True
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is False
+
+    def test_invalid_env_logs_and_falls_back_to_traitlet(self):
+        with patch.dict("os.environ", {"NBI_TEST_FLAG": "maybe"}):
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is True
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is False
+
+
 class TestSkillBundleFileHandler:
     def test_write_and_read_bundle_file(self, skill_manager):
         skill_manager.create_skill("user", "bun", "d", [], "")
