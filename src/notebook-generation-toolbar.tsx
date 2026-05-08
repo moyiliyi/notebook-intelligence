@@ -23,10 +23,6 @@ import { NotebookGenerationPopover } from './components/notebook-generation-popo
 
 const TOOLBAR_BUTTON_NAME = 'nbi-generate-notebook';
 const TOOLBAR_STATUS_NAME = 'nbi-generate-notebook-status';
-// Insert at the very left of the notebook toolbar so the button (and the
-// progress pill that sits next to it) are easy to discover.
-const TOOLBAR_BUTTON_INDEX = 0;
-const TOOLBAR_STATUS_INDEX = 1;
 
 interface INotebookGenerationToolbarOptions {
   app: JupyterFrontEnd;
@@ -223,8 +219,8 @@ class NotebookGenerationToolbarController {
     if (!this._statusWidget) {
       const widget = new Widget();
       widget.addClass('nbi-notebook-generation-status');
-      this._panel.toolbar.insertItem(
-        TOOLBAR_STATUS_INDEX,
+      this._panel.toolbar.insertAfter(
+        TOOLBAR_BUTTON_NAME,
         TOOLBAR_STATUS_NAME,
         widget
       );
@@ -266,7 +262,7 @@ export class NotebookGenerationToolbarExtension
       tooltip: 'Update active notebook with AI'
     });
     button.addClass('nbi-notebook-generation-toolbar-button');
-    panel.toolbar.insertItem(TOOLBAR_BUTTON_INDEX, TOOLBAR_BUTTON_NAME, button);
+    panel.toolbar.insertAfter('cellType', TOOLBAR_BUTTON_NAME, button);
     return new DisposableDelegate(() => {
       controller.dispose();
       button.dispose();
