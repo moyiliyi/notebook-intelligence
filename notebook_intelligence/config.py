@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from typing import Optional
 
 from notebook_intelligence.feature_flags import (
     CHAT_MODEL_OVERRIDES,
@@ -22,8 +23,8 @@ class NBIConfig:
     _feature_policies: dict = {}
     _string_overrides: dict = {}
 
-    def __init__(self, options: dict = {}):
-        self.options = options
+    def __init__(self, options: Optional[dict] = None):
+        self.options = dict(options) if options is not None else {}
         self._feature_policies = {}
         self._string_overrides = {}
 

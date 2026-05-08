@@ -7,7 +7,7 @@ import os
 from queue import Queue
 import threading
 import time
-from typing import Any, Union
+from typing import Any, Optional, Union
 import uuid
 from fastmcp.client import StdioTransport, StreamableHttpTransport
 from mcp import StdioServerParameters
@@ -158,12 +158,12 @@ class StreamableHttpServerParameters:
     headers: dict[str, Any] | None = None
 
 class MCPServerImpl(MCPServer):
-    def __init__(self, manager: "MCPManager", name: str, stdio_params: StdioServerParameters = None, streamable_http_params: StreamableHttpServerParameters = None, auto_approve_tools: list[str] = []):
+    def __init__(self, manager: "MCPManager", name: str, stdio_params: StdioServerParameters = None, streamable_http_params: StreamableHttpServerParameters = None, auto_approve_tools: Optional[list[str]] = None):
         self._manager = manager
         self._name: str = name
         self._stdio_params: StdioServerParameters = stdio_params
         self._streamable_http_params: StreamableHttpServerParameters = streamable_http_params
-        self._auto_approve_tools: set[str] = set(auto_approve_tools)
+        self._auto_approve_tools: set[str] = set(auto_approve_tools) if auto_approve_tools is not None else set()
         self._tried_to_get_tool_list = False
         self._mcp_tools = []
         self._mcp_prompts = []
@@ -451,13 +451,13 @@ class MCPServerImpl(MCPServer):
             return None
 
 class MCPChatParticipant(BaseChatParticipant):
-    def __init__(self, id: str, name: str, servers: list[MCPServer], nbi_tools: list[str] = []):
+    def __init__(self, id: str, name: str, servers: list[MCPServer], nbi_tools: Optional[list[str]] = None):
         super().__init__()
         self._id = id
         self._name = name
         self._servers = servers
         self._tools_updated = False
-        self._nbi_tools = nbi_tools
+        self._nbi_tools = list(nbi_tools) if nbi_tools is not None else []
 
     @property
     def id(self) -> str:

@@ -174,14 +174,17 @@ class TestTelemetryListenerFeedbackDispatch:
         assert sentiments == ["positive", "negative"]
 
     def test_duplicate_listener_name_rejected(self, ai_service_manager):
-        """Registering a listener with a duplicate name should be silently rejected."""
+        """Registering a listener with a duplicate name raises RegistrationError."""
+        from notebook_intelligence.api import RegistrationError
+
         listener_1 = CapturingTelemetryListener()
         listener_2 = CapturingTelemetryListener()  # same .name property
 
         ai_service_manager.register_telemetry_listener(listener_1)
-        ai_service_manager.register_telemetry_listener(listener_2)
+        with pytest.raises(RegistrationError):
+            ai_service_manager.register_telemetry_listener(listener_2)
 
-        # Only the first should be registered
+        # Only the first should be registered.
         assert ai_service_manager.telemetry_listeners["test-capturing-listener"] is listener_1
 
 

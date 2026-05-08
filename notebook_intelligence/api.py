@@ -16,6 +16,18 @@ from notebook_intelligence.util import ThreadSafeWebSocketConnector
 
 log = logging.getLogger(__name__)
 
+
+class RegistrationError(Exception):
+    """Raised when an extension tries to register a participant, provider, or
+    other named resource whose id is reserved or already in use.
+
+    Previously the registrar logged the collision via ``log.error`` and
+    silently dropped the registration; that surface failed only in
+    production logs that authors rarely read. Raising lets the loader
+    surface the failure at install/import time instead.
+    """
+
+
 class RequestDataType(str, Enum):
     ChatRequest = 'chat-request'
     ChatUserInput = 'chat-user-input'
@@ -82,7 +94,15 @@ class Signal:
         self._listeners.append(listener)
 
     def disconnect(self, listener: Callable) -> None:
-        self._listeners.remove(listener)
+        # `list.remove` raises ``ValueError`` on a missing entry; tolerating
+        # double-disconnect avoids crashing the chat loop when a misbehaving
+        # plugin disconnects twice or after a crash recovery. Surfaced at
+        # DEBUG so a real plugin bug can still be diagnosed if the noise
+        # ever matters.
+        try:
+            self._listeners.remove(listener)
+        except ValueError:
+            log.debug("Signal.disconnect: listener %r was not connected", listener)
 
 class SignalImpl(Signal):
     def __init__(self):
@@ -127,7 +147,7 @@ class ChatRequest:
 class ResponseStreamData:
     @property
     def data_type(self) -> ResponseStreamDataType:
-        raise NotImplemented
+        raise NotImplementedError
 
 @dataclass
 class MarkdownData(ResponseStreamData):
@@ -263,13 +283,13 @@ class ChatResponse:
 
     @property
     def message_id(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     def stream(self, data: ResponseStreamData, finish: bool = False) -> None:
-        raise NotImplemented
+        raise NotImplementedError
     
     def finish(self) -> None:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def user_input_signal(self) -> Signal:
@@ -294,7 +314,7 @@ class ChatResponse:
             await asyncio.sleep(0.1)
 
     async def run_ui_command(self, command: str, args: dict = {}) -> None:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def run_ui_command_response_signal(self) -> Signal:
@@ -333,37 +353,39 @@ class ChatCommand:
 class Tool:
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def title(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def tags(self) -> list[str]:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def description(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def schema(self) -> dict:
-        raise NotImplemented
+        raise NotImplementedError
 
     def pre_invoke(self, request: ChatRequest, tool_args: dict) -> Union[ToolPreInvokeResponse, None]:
         return None
 
     async def handle_tool_call(self, request: ChatRequest, response: ChatResponse, tool_context: dict, tool_args: dict) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
 class Toolset:
-    def __init__(self, id: str, name: str, description: str, provider: Union['NotebookIntelligenceExtension', None], tools: list[Tool] = [], instructions: str = None):
+    def __init__(self, id: str, name: str, description: str, provider: Union['NotebookIntelligenceExtension', None], tools: Optional[list[Tool]] = None, instructions: str = None):
         self.id = id
         self.name = name
         self.description = description
         self.provider = provider
-        self.tools: list[Tool] = tools
+        # `tools=[]` as the default would share a single list across every
+        # Toolset instance — `add_tool` on one would leak into all others.
+        self.tools: list[Tool] = list(tools) if tools is not None else []
         self.instructions: Union[str, None] = instructions
 
     def add_tool(self, tool: Tool) -> None:
@@ -420,74 +442,74 @@ class SimpleTool(Tool):
 class PromptArgument:
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def description(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def required(self) -> bool:
-        raise NotImplemented
+        raise NotImplementedError
 
 class MCPPrompt:
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def title(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def description(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def arguments(self) -> list[PromptArgument]:
-        raise NotImplemented
+        raise NotImplementedError
 
     def get_value(self, prompt_args: dict = {}) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
 class MCPServer:
     @property
     def name(self) -> str:
-        return NotImplemented
+        raise NotImplementedError
 
     @property
     def status(self) -> MCPServerStatus:
-        return NotImplemented
+        raise NotImplementedError
     
     def connect(self):
-        return NotImplemented
+        raise NotImplementedError
 
     def disconnect(self):
-        return NotImplemented
+        raise NotImplementedError
 
     def update_tool_list(self):
-        return NotImplemented
+        raise NotImplementedError
     
     def get_tools(self) -> list[Tool]:
-        return NotImplemented
+        raise NotImplementedError
 
     def get_tool(self, tool_name: str) -> Tool:
-        return NotImplemented
+        raise NotImplementedError
 
     def call_tool(self, tool_name: str, tool_args: dict):
-        return NotImplemented
+        raise NotImplementedError
 
     def update_prompts_list(self):
-        return NotImplemented
+        raise NotImplementedError
 
     def get_prompts(self) -> list[MCPPrompt]:
-        return NotImplemented
+        raise NotImplementedError
 
     def get_prompt(self, prompt_name: str) -> MCPPrompt:
-        return NotImplemented
+        raise NotImplementedError
     
     def get_prompt_value(self, prompt_name: str, prompt_args: dict = {}) -> list[dict]:
-        return NotImplemented
+        raise NotImplementedError
 
 def auto_approve(tool: SimpleTool):
     """
@@ -526,15 +548,15 @@ class ChatMode:
 class ChatParticipant:
     @property
     def id(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def description(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def icon_path(self) -> str:
@@ -554,7 +576,7 @@ class ChatParticipant:
         return set(["*"])
 
     async def handle_chat_request(self, request: ChatRequest, response: ChatResponse, options: dict = {}) -> None:
-        raise NotImplemented
+        raise NotImplementedError
     
     async def handle_chat_request_with_tools(self, request: ChatRequest, response: ChatResponse, options: dict = {}, tool_context: dict = {}, tool_choice = 'auto') -> None:
         tools = self.tools
@@ -702,10 +724,10 @@ class ChatParticipant:
 class CompletionContextProvider:
     @property
     def id(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     def handle_completion_context_request(self, request: ContextRequest) -> CompletionContext:
-        raise NotImplemented
+        raise NotImplementedError
 
 @dataclass
 class LLMProviderProperty:
@@ -744,11 +766,11 @@ class AIModel(LLMPropertyProvider):
 
     @property
     def id(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def provider(self) -> 'LLMProvider':
@@ -756,7 +778,7 @@ class AIModel(LLMPropertyProvider):
     
     @property
     def context_window(self) -> int:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def supports_tools(self) -> bool:
@@ -768,15 +790,15 @@ class AIModel(LLMPropertyProvider):
 
 class ChatModel(AIModel):
     def completions(self, messages: list[dict], tools: list[dict] = None, response: ChatResponse = None, cancel_token: CancelToken = None, options: dict = {}) -> Any:
-        raise NotImplemented
+        raise NotImplementedError
 
 class InlineCompletionModel(AIModel):
     def inline_completions(prefix, suffix, language, filename, context: CompletionContext, cancel_token: CancelToken) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
 class EmbeddingModel(AIModel):
     def embeddings(self, inputs: list[str]) -> Any:
-        raise NotImplemented
+        raise NotImplementedError
 
 class LLMProvider(LLMPropertyProvider):
     def __init__(self):
@@ -784,23 +806,23 @@ class LLMProvider(LLMPropertyProvider):
 
     @property
     def id(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def chat_models(self) -> list[ChatModel]:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def inline_completion_models(self) -> list[InlineCompletionModel]:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def embedding_models(self) -> list[EmbeddingModel]:
-        raise NotImplemented
+        raise NotImplementedError
 
     def get_chat_model(self, model_id: str) -> ChatModel:
         for model in self.chat_models:
@@ -838,7 +860,7 @@ class TelemetryEventType(str, Enum):
 class TelemetryEvent:
     @property
     def type(self) -> TelemetryEventType:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def data(self) -> dict:
@@ -847,52 +869,52 @@ class TelemetryEvent:
 class TelemetryListener:
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     def on_telemetry_event(self, event: TelemetryEvent):
-        raise NotImplemented
+        raise NotImplementedError
 
 class Host:
     def register_llm_provider(self, provider: LLMProvider) -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     def register_chat_participant(self, participant: ChatParticipant) -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     def register_completion_context_provider(self, provider: CompletionContextProvider) -> None:
-        raise NotImplemented
+        raise NotImplementedError
     
     def register_telemetry_listener(self, listener: TelemetryListener) -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     def register_toolset(self, toolset: Toolset) -> None:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def nbi_config(self) -> NBIConfig:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def default_chat_participant(self) -> ChatParticipant:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def chat_model(self) -> ChatModel:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def inline_completion_model(self) -> InlineCompletionModel:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def embedding_model(self) -> EmbeddingModel:
-        raise NotImplemented
+        raise NotImplementedError
 
     def get_mcp_server(self, server_name: str) -> MCPServer:
-        return NotImplemented
+        raise NotImplementedError
 
     def get_mcp_server_tool(self, server_name: str, tool_name: str) -> Tool:
-        return NotImplemented
+        raise NotImplementedError
 
     def get_mcp_server_prompt(self, server_name: str, prompt_name: str) -> MCPPrompt:
         mcp_server = self.get_mcp_server(server_name)
@@ -907,40 +929,40 @@ class Host:
         return None
 
     def get_extension_toolset(self, extension_id: str, toolset_id: str) -> Toolset:
-        return NotImplemented
+        raise NotImplementedError
 
     def get_extension_tool(self, extension_id: str, toolset_id: str, tool_name: str) -> Tool:
-        return NotImplemented
+        raise NotImplementedError
     
     def get_rule_manager(self):
         """Get the rule manager instance if available."""
-        return NotImplemented
+        raise NotImplementedError
 
     def get_skill_manager(self):
         """Get the skill manager instance if available."""
-        return NotImplemented
+        raise NotImplementedError
 
     @property
     def websocket_connector(self) -> ThreadSafeWebSocketConnector:
-        return NotImplemented
+        raise NotImplementedError
     
 
 class NotebookIntelligenceExtension:
     @property
     def id(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def name(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
     
     @property
     def provider(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def url(self) -> str:
-        raise NotImplemented
+        raise NotImplementedError
 
     def activate(self, host: Host) -> None:
-        raise NotImplemented
+        raise NotImplementedError

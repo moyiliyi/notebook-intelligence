@@ -8,7 +8,7 @@ import sys
 from typing import Dict, Optional
 import logging
 from notebook_intelligence import github_copilot
-from notebook_intelligence.api import ButtonData, ChatModel, EmbeddingModel, InlineCompletionModel, LLMProvider, ChatParticipant, ChatRequest, ChatResponse, CompletionContext, ContextRequest, Host, CompletionContextProvider, MCPPrompt, MCPServer, MarkdownData, NotebookIntelligenceExtension, TelemetryEvent, TelemetryListener, Tool, Toolset
+from notebook_intelligence.api import ButtonData, ChatModel, EmbeddingModel, InlineCompletionModel, LLMProvider, ChatParticipant, ChatRequest, ChatResponse, CompletionContext, ContextRequest, Host, CompletionContextProvider, MCPPrompt, MCPServer, MarkdownData, NotebookIntelligenceExtension, RegistrationError, TelemetryEvent, TelemetryListener, Tool, Toolset
 from notebook_intelligence.base_chat_participant import BaseChatParticipant
 from notebook_intelligence.config import NBIConfig
 from notebook_intelligence.github_copilot_chat_participant import GithubCopilotChatParticipant
@@ -43,13 +43,13 @@ class PromptParts:
     mcp_arguments: dict = None
 
 class AIServiceManager(Host):
-    def __init__(self, options: dict = {}):
+    def __init__(self, options: Optional[dict] = None):
         self.llm_providers: Dict[str, LLMProvider] = {}
         self.chat_participants: Dict[str, ChatParticipant] = {}
         self.completion_context_providers: Dict[str, CompletionContextProvider] = {}
         self.telemetry_listeners: Dict[str, TelemetryListener] = {}
         self._extension_toolsets: Dict[str, list[Toolset]] = {}
-        self._options = options.copy()
+        self._options = dict(options) if options is not None else {}
         self._nbi_config = NBIConfig({"server_root_dir": self._options.get('server_root_dir', '')})
         # Apply admin policies before any consumer (model bootstrap, MCP
         # connect, login_with_existing_credentials) reads claude_settings or
@@ -129,7 +129,13 @@ class AIServiceManager(Host):
         self.register_llm_provider(self._ollama_llm_provider)
         self._mcp_manager = MCPManager(self.nbi_config.mcp)
         for participant in self._mcp_manager.get_mcp_participants():
-            self.register_chat_participant(participant)
+            # A duplicate / reserved id from one MCP server should not block
+            # the rest from registering — log and continue rather than crash
+            # the extension's boot sequence.
+            try:
+                self.register_chat_participant(participant)
+            except RegistrationError as e:
+                log.error(f"Skipping MCP chat participant: {e}")
 
         self.update_models_from_config()
         self.initialize_extensions()
@@ -223,11 +229,9 @@ class AIServiceManager(Host):
 
     def register_chat_participant(self, participant: ChatParticipant):
         if participant.id in RESERVED_PARTICIPANT_IDS:
-            log.error(f"Participant ID '{participant.id}' is reserved!")
-            return
+            raise RegistrationError(f"Participant ID '{participant.id}' is reserved!")
         if participant.id in self.chat_participants:
-            log.error(f"Participant ID '{participant.id}' is already in use!")
-            return
+            raise RegistrationError(f"Participant ID '{participant.id}' is already in use!")
         self.chat_participants[participant.id] = participant
 
     def unregister_chat_participant(self, participant: ChatParticipant):
@@ -236,23 +240,19 @@ class AIServiceManager(Host):
 
     def register_llm_provider(self, provider: LLMProvider) -> None:
         if provider.id in RESERVED_LLM_PROVIDER_IDS:
-            log.error(f"LLM Provider ID '{provider.id}' is reserved!")
-            return
+            raise RegistrationError(f"LLM Provider ID '{provider.id}' is reserved!")
         if provider.id in self.chat_participants:
-            log.error(f"LLM Provider ID '{provider.id}' is already in use!")
-            return
+            raise RegistrationError(f"LLM Provider ID '{provider.id}' is already in use!")
         self.llm_providers[provider.id] = provider
 
     def register_completion_context_provider(self, provider: CompletionContextProvider) -> None:
         if provider.id in self.completion_context_providers:
-            log.error(f"Completion Context Provider ID '{provider.id}' is already in use!")
-            return
+            raise RegistrationError(f"Completion Context Provider ID '{provider.id}' is already in use!")
         self.completion_context_providers[provider.id] = provider
 
     def register_telemetry_listener(self, listener: TelemetryListener) -> None:
         if listener.name in self.telemetry_listeners:
-            log.error(f"Notebook Intelligence telemetry listener '{listener.name}' already exists!")
-            return
+            raise RegistrationError(f"Notebook Intelligence telemetry listener '{listener.name}' already exists!")
         log.warning(f"Notebook Intelligence telemetry listener '{listener.name}' registered. Make sure it is from a trusted source.")
         self.telemetry_listeners[listener.name] = listener
 
