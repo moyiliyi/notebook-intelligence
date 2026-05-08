@@ -157,24 +157,27 @@ def _resolve_policy_with_env(env_var_name: str, traitlet_value: str) -> str:
 
 _TRUE_VALUES = frozenset({"true", "1", "yes", "on"})
 _FALSE_VALUES = frozenset({"false", "0", "no", "off"})
+_BOOL_ENV_VOCAB = "true, false, 1, 0, yes, no, on, off"
 
 
-def _resolve_bool_with_env(env_var_name: str, traitlet_value: bool) -> bool:
-    """Resolve a boolean admin gate: env var wins if recognized, else traitlet."""
+def _resolve_bool_with_env(env_var_name: str, fallback: bool | None) -> bool:
+    """Resolve a boolean admin gate: env var wins if recognized, else fallback.
+
+    Raises ValueError when the env var is set but unrecognized — silent
+    fall-back can flip a security gate either direction depending on the
+    fallback polarity, so a typo must surface at startup. ``None`` fallback
+    is coerced to ``False``.
+    """
     env_value = os.environ.get(env_var_name, "").strip().lower()
     if not env_value:
-        return bool(traitlet_value)
+        return bool(fallback)
     if env_value in _TRUE_VALUES:
         return True
     if env_value in _FALSE_VALUES:
         return False
-    log.warning(
-        "Ignoring %s=%r: must be one of %s",
-        env_var_name,
-        env_value,
-        ", ".join(sorted(_TRUE_VALUES | _FALSE_VALUES)),
+    raise ValueError(
+        f"Invalid {env_var_name}={env_value!r}: must be one of {_BOOL_ENV_VOCAB}"
     )
-    return bool(traitlet_value)
 
 
 # Single source of truth for the boolean policies. Each entry is

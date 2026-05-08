@@ -337,17 +337,19 @@ class TestResolveBoolWithEnv:
         with patch.dict("os.environ", {"NBI_TEST_FLAG": value}):
             assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is False
 
-    def test_unset_env_returns_traitlet(self):
-        with patch.dict("os.environ", {}, clear=False):
-            import os as _os
-            _os.environ.pop("NBI_TEST_FLAG", None)
-            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is True
-            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is False
+    def test_unset_env_returns_traitlet(self, monkeypatch):
+        monkeypatch.delenv("NBI_TEST_FLAG", raising=False)
+        assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is True
+        assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is False
 
-    def test_invalid_env_logs_and_falls_back_to_traitlet(self):
+    def test_invalid_env_raises(self):
         with patch.dict("os.environ", {"NBI_TEST_FLAG": "maybe"}):
-            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is True
-            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is False
+            with pytest.raises(ValueError, match="NBI_TEST_FLAG"):
+                ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True)
+
+    def test_none_fallback_is_treated_as_false(self, monkeypatch):
+        monkeypatch.delenv("NBI_TEST_FLAG", raising=False)
+        assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", None) is False
 
 
 class TestSkillBundleFileHandler:
