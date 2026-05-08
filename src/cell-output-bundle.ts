@@ -1,7 +1,11 @@
 // Copyright (c) Mehmet Bektas <mbektasgh@outlook.com>
 
 import { CodeCell } from '@jupyterlab/cells';
-import { formatJupyterError, truncateToTokenCount } from './utils';
+import {
+  formatJupyterError,
+  joinMultilineString,
+  truncateToTokenCount
+} from './utils';
 import { IOutputContextItem } from './tokens';
 
 export const MAX_TOKENS_PER_OUTPUT = 4000;
@@ -73,21 +77,27 @@ export function cellOutputAsContextBundle(
     }
 
     if (output.output_type === 'stream') {
-      pushBundle('text/plain', String(output.text ?? ''));
+      pushBundle('text/plain', joinMultilineString(output.text));
       continue;
     }
 
     // execute_result and display_data
     const data = (output.data ?? {}) as Record<string, any>;
 
-    // DataFrames render as both text/html and text/plain; the plain form is the
-    // formatted ASCII table — cheaper, and an LLM reads it just fine.
-    if (data['text/html'] && data['text/plain']) {
-      pushBundle('text/plain', String(data['text/plain']));
-    } else if (data['text/plain']) {
-      pushBundle('text/plain', String(data['text/plain']));
-    } else if (data['text/html']) {
-      pushBundle('text/html', stripHtml(String(data['text/html'])));
+    // DataFrames render as both text/html and text/plain; prefer the plain
+    // form — it's the formatted ASCII table, cheaper, and an LLM reads it
+    // just fine. text/html alone is stripped to plain text below.
+    // Use ``in`` rather than truthy check: an empty array ``[]`` is legal
+    // (if rare) nbformat for ``text/plain`` but falsy in JS, which would
+    // otherwise let the html branch fire over an explicit-but-empty plain
+    // entry.
+    if ('text/plain' in data) {
+      pushBundle('text/plain', joinMultilineString(data['text/plain']));
+    } else if ('text/html' in data) {
+      pushBundle(
+        'text/html',
+        stripHtml(joinMultilineString(data['text/html']))
+      );
     }
 
     if (data['application/vnd.plotly.v1+json']) {
@@ -106,7 +116,7 @@ export function cellOutputAsContextBundle(
       if (!data[imgMime]) {
         continue;
       }
-      const raw = String(data[imgMime]);
+      const raw = joinMultilineString(data[imgMime]);
       if (!supportsVision) {
         pushBundle(imgMime, '<image omitted: model lacks vision support>');
       } else if (raw.length > MAX_IMAGE_BASE64_BYTES) {

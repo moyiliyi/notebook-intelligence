@@ -335,6 +335,29 @@ describe('cellOutputAsText', () => {
     ]);
     expect(cellOutputAsText(cell)).toBe('first\nsecond');
   });
+
+  // nbformat allows stream `text` and `data['text/plain']` to be a list of
+  // strings joined with the empty string. Plain `String([...])` would coerce
+  // that to a comma-joined garbage string.
+  it('joins array-form stream text without comma separators', () => {
+    const cell = makeCell([
+      {
+        output_type: 'stream',
+        text: ['line one\n', 'line two\n', 'line three']
+      }
+    ]);
+    expect(cellOutputAsText(cell)).toBe('line one\nline two\nline three\n');
+  });
+
+  it('joins array-form text/plain in execute_result', () => {
+    const cell = makeCell([
+      {
+        output_type: 'execute_result',
+        data: { 'text/plain': ['hello', '\n', 'world'] }
+      }
+    ]);
+    expect(cellOutputAsText(cell)).toBe('hello\nworld');
+  });
 });
 
 describe('writeTextToClipboard', () => {

@@ -140,12 +140,13 @@ export function cellOutputAsText(cell: CodeCell): string {
   const outputs = cell.outputArea.model.toJSON();
   for (const output of outputs) {
     if (output.output_type === 'execute_result') {
-      content +=
+      const data =
         typeof output.data === 'object' && output.data !== null
           ? (output.data as PartialJSONObject)['text/plain']
-          : '' + '\n';
+          : undefined;
+      content += joinMultilineString(data);
     } else if (output.output_type === 'stream') {
-      content += output.text + '\n';
+      content += joinMultilineString(output.text) + '\n';
     } else if (output.output_type === 'error') {
       // Skip errors without a traceback to match historical behavior of this
       // function; the head-only case is intentional here.
@@ -156,6 +157,23 @@ export function cellOutputAsText(cell: CodeCell): string {
   }
 
   return content;
+}
+
+// nbformat allows text-shaped output fields (stream `text`, `data['text/plain']`,
+// `data['text/html']`, etc.) to be either a single string or a list of strings,
+// joined with the empty string. Some kernels (e.g. older IPython, R) emit the
+// list form for multi-line output. Plain `String([...])` coerces a list to
+// `"a,b,c"` — wrong for both display and tokenization. Centralize the join.
+export function joinMultilineString(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map(v => (v === null || v === undefined ? '' : String(v)))
+      .join('');
+  }
+  return String(value);
 }
 
 export function getTokenCount(source: string): number {

@@ -235,6 +235,61 @@ describe('cellOutputAsContextBundle', () => {
     });
   });
 
+  // nbformat allows stream `text` and `data[mime]` text fields to be either a
+  // single string or a list of strings (joined with the empty string). Plain
+  // `String([...])` would coerce the list to a comma-joined garbage string.
+  describe('multiline_string handling (nbformat)', () => {
+    it('joins array-form stream text without comma separators', () => {
+      const cell = makeCell([
+        {
+          output_type: 'stream',
+          text: ['line one\n', 'line two\n', 'line three']
+        }
+      ]);
+      const bundle = cellOutputAsContextBundle(cell);
+      expect(bundle.mimeBundles[0].data).toBe('line one\nline two\nline three');
+      expect(bundle.mimeBundles[0].data).not.toContain(',');
+    });
+
+    it('joins array-form text/plain in execute_result', () => {
+      const cell = makeCell([
+        {
+          output_type: 'execute_result',
+          data: { 'text/plain': ['hello', '\n', 'world'] }
+        }
+      ]);
+      const bundle = cellOutputAsContextBundle(cell);
+      expect(bundle.mimeBundles[0].data).toBe('hello\nworld');
+    });
+
+    it('joins array-form text/html before stripping tags', () => {
+      const cell = makeCell([
+        {
+          output_type: 'execute_result',
+          data: { 'text/html': ['<p>hello ', '<b>world</b>', '</p>'] }
+        }
+      ]);
+      const bundle = cellOutputAsContextBundle(cell);
+      expect(bundle.mimeBundles[0].mimeType).toBe('text/html');
+      // Tags stripped, content joined with no comma artifacts.
+      expect(bundle.mimeBundles[0].data).toContain('hello');
+      expect(bundle.mimeBundles[0].data).toContain('world');
+      expect(bundle.mimeBundles[0].data).not.toContain('<');
+      expect(bundle.mimeBundles[0].data).not.toContain(',');
+    });
+
+    it('joins array-form image base64 (rare but legal nbformat)', () => {
+      const cell = makeCell([
+        {
+          output_type: 'display_data',
+          data: { 'image/png': ['iVBORw0K', 'Ggo'] }
+        }
+      ]);
+      const bundle = cellOutputAsContextBundle(cell, { supportsVision: true });
+      expect(bundle.mimeBundles[0].data).toBe('iVBORw0KGgo');
+    });
+  });
+
   it('returns the documented bundle shape', () => {
     const bundle: IOutputContextBundle = cellOutputAsContextBundle(
       makeCell([{ output_type: 'stream', text: 'hi' }])
