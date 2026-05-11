@@ -426,6 +426,13 @@ function readFileAsDataURL(file: File): Promise<string> {
 const MAX_VISIBLE_WORKSPACE_FILES = 50;
 const MAX_WORKSPACE_FILE_SCAN_COUNT = 1500;
 const SKIPPED_WORKSPACE_DIRECTORIES = new Set(['__pycache__', 'node_modules']);
+// Bounded parallelism for the workspace tree walk. The Jupyter Contents API
+// is per-directory, so a directory-heavy workspace with strictly serial
+// fetches gets dominated by HTTP roundtrip latency. Eight in flight at a
+// time stays well under the server's default tornado handler pool while
+// recovering most of the easy speedup; further parallelism is bounded by
+// the tree's width and the slowest fetch in each batch.
+const WORKSPACE_SCAN_CONCURRENCY = 8;
 
 function countContentLines(content: string): number {
   if (content === '') {
@@ -1055,6 +1062,13 @@ function SidebarComponent(props: any) {
   const [workspaceScanLimitReached, setWorkspaceScanLimitReached] =
     useState(false);
   const [workspaceFileActionPath, setWorkspaceFileActionPath] = useState('');
+  // Scan-generation counter — incremented when the picker closes, on
+  // unmount, or when a fresh scan starts. The in-flight BFS reads this
+  // before each batch and before its terminal `setState` calls; if the
+  // generation has changed, the scan abandons silently so a slow tree
+  // walk can't land stale results on a reopened picker.
+  const workspaceFilesLoadingRef = useRef(false);
+  const workspaceScanGenerationRef = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1119,86 +1133,150 @@ function SidebarComponent(props: any) {
   }, [workspaceFileSearch, workspaceFiles]);
 
   const loadWorkspaceFiles = useCallback(async () => {
-    if (workspaceFilesLoading) {
+    if (workspaceFilesLoadingRef.current) {
       return;
     }
+    workspaceFilesLoadingRef.current = true;
+    const generation = ++workspaceScanGenerationRef.current;
+    const isCanceled = () => workspaceScanGenerationRef.current !== generation;
 
     setWorkspaceFilesLoading(true);
     setWorkspaceFilesError('');
 
     const discoveredFiles: IWorkspaceFileOption[] = [];
     const directoriesToScan = [''];
+    // Path-string dedupe: prevents a directory enqueued under the same
+    // logical path from being fetched twice. Symlinks reached via two
+    // different parent paths (e.g., `a/link` and `b/link` both pointing
+    // at `foo/`) have distinct path strings and will still be walked
+    // twice — the Contents API doesn't expose the resolved inode for
+    // a true canonical dedupe.
+    const visitedDirectories = new Set<string>(['']);
     let limitReached = false;
+    let totalFulfilled = 0;
+    // Boolean rather than `lastRejection !== undefined`: a rejection
+    // whose reason is itself `undefined` should still surface as an
+    // error, not be silently treated as success.
+    let sawRejection = false;
+    let lastRejection: unknown;
 
     try {
       const contentsManager = props.getApp().serviceManager.contents;
 
+      // Merge built-in skips with the admin-configured
+      // `additional_skipped_workspace_directories` traitlet so both layers
+      // gate enqueueing before we issue an HTTP request for the subdir.
       const skipDirectoryNames = new Set<string>([
         ...SKIPPED_WORKSPACE_DIRECTORIES,
         ...NBIAPI.config.additionalSkippedWorkspaceDirectories
       ]);
 
+      // BFS the tree in bounded-parallel batches. Per-directory failures
+      // (deleted mid-scan, permission-denied mount) are skipped so one bad
+      // directory doesn't kill the whole picker — but if no fetch in the
+      // entire walk succeeds (offline, server down), the all-rejected case
+      // bubbles to the catch below as a real error.
       while (
         directoriesToScan.length > 0 &&
         discoveredFiles.length < MAX_WORKSPACE_FILE_SCAN_COUNT
       ) {
-        const currentDirectory = directoriesToScan.shift() || '';
-        const model: any = await contentsManager.get(currentDirectory, {
-          content: true
-        });
-
-        if (model.type !== 'directory' || !Array.isArray(model.content)) {
-          continue;
+        if (isCanceled()) {
+          return;
+        }
+        // Sort the queue before slicing so cap-truncated walks pick a
+        // stable, alphabetical subset across runs. Without this the
+        // "first 1500 files" the user sees depends on which HTTP
+        // responses happened to resolve first.
+        directoriesToScan.sort();
+        const batch = directoriesToScan.splice(0, WORKSPACE_SCAN_CONCURRENCY);
+        const results = await Promise.allSettled(
+          batch.map(dir => contentsManager.get(dir, { content: true }))
+        );
+        if (isCanceled()) {
+          return;
         }
 
-        const entries = [...model.content].sort((lhs, rhs) =>
-          lhs.path.localeCompare(rhs.path)
-        );
-
-        for (const entry of entries) {
-          if (!entry?.path || !entry?.name) {
-            continue;
-          }
-
-          if (entry.name.startsWith('.')) {
-            continue;
-          }
-
-          if (entry.type === 'directory') {
-            if (!skipDirectoryNames.has(entry.name)) {
-              directoriesToScan.push(entry.path);
-            }
-            continue;
-          }
-
-          if (entry.type === 'file' || entry.type === 'notebook') {
-            discoveredFiles.push({
-              name: entry.name,
-              path: entry.path,
-              type: entry.type
-            });
-          }
-
-          if (discoveredFiles.length >= MAX_WORKSPACE_FILE_SCAN_COUNT) {
-            limitReached = true;
+        for (const result of results) {
+          if (limitReached) {
             break;
+          }
+          if (result.status !== 'fulfilled') {
+            sawRejection = true;
+            lastRejection = result.reason;
+            continue;
+          }
+          totalFulfilled += 1;
+          const model: any = result.value;
+          if (model.type !== 'directory' || !Array.isArray(model.content)) {
+            continue;
+          }
+
+          // Sort entries within a directory so cap-truncated picks remain
+          // deterministic when the cap fires mid-directory.
+          const entries = [...model.content].sort((lhs, rhs) =>
+            lhs.path.localeCompare(rhs.path)
+          );
+          for (const entry of entries) {
+            if (!entry?.path || !entry?.name) {
+              continue;
+            }
+            if (entry.name.startsWith('.')) {
+              continue;
+            }
+            if (entry.type === 'directory') {
+              if (
+                !skipDirectoryNames.has(entry.name) &&
+                !visitedDirectories.has(entry.path)
+              ) {
+                visitedDirectories.add(entry.path);
+                directoriesToScan.push(entry.path);
+              }
+              continue;
+            }
+            if (entry.type === 'file' || entry.type === 'notebook') {
+              discoveredFiles.push({
+                name: entry.name,
+                path: entry.path,
+                type: entry.type
+              });
+              if (discoveredFiles.length >= MAX_WORKSPACE_FILE_SCAN_COUNT) {
+                limitReached = true;
+                break;
+              }
+            }
           }
         }
       }
 
+      if (isCanceled()) {
+        return;
+      }
+      if (totalFulfilled === 0 && sawRejection) {
+        // Every fetch rejected — bubble out the first failure so the
+        // popover surfaces an error instead of an empty list.
+        throw lastRejection;
+      }
       discoveredFiles.sort((lhs, rhs) => lhs.path.localeCompare(rhs.path));
       setWorkspaceFiles(discoveredFiles);
       setWorkspaceFilesLoaded(true);
       setWorkspaceScanLimitReached(limitReached);
     } catch (error: any) {
+      // Log before the cancel guard so a fully-failed scan that the user
+      // then closed/unmounted still leaves a diagnostic trail.
       console.error('Failed to load workspace files.', error);
+      if (isCanceled()) {
+        return;
+      }
       setWorkspaceFilesError(
         error?.message || 'Failed to load workspace files.'
       );
     } finally {
-      setWorkspaceFilesLoading(false);
+      workspaceFilesLoadingRef.current = false;
+      if (!isCanceled()) {
+        setWorkspaceFilesLoading(false);
+      }
     }
-  }, [props, workspaceFilesLoading]);
+  }, [props]);
 
   const handleWorkspaceFilePickerClick = async () => {
     setShowPopover(false);
@@ -2843,10 +2921,25 @@ function SidebarComponent(props: any) {
 
   useEffect(() => {
     if (!showWorkspaceFilePicker) {
+      // Abandon any in-flight scan so its terminal setState calls don't
+      // land on a closed picker (or, if the user re-opens, on a new
+      // generation's render).
+      workspaceScanGenerationRef.current += 1;
+      workspaceFilesLoadingRef.current = false;
+      setWorkspaceFilesLoading(false);
       setWorkspaceFilesError('');
       setWorkspaceFileSearch('');
     }
   }, [showWorkspaceFilePicker]);
+
+  // Abandon any in-flight scan on unmount; setState after unmount is a
+  // React anti-pattern and the parallel BFS makes the race window wider.
+  useEffect(
+    () => () => {
+      workspaceScanGenerationRef.current += 1;
+    },
+    []
+  );
 
   const getActiveDocumentContextTitle = (
     activeDocumentInfo: IActiveDocumentInfo
