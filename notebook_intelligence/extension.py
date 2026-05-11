@@ -160,6 +160,20 @@ _FALSE_VALUES = frozenset({"false", "0", "no", "off"})
 _BOOL_ENV_VOCAB = "true, false, 1, 0, yes, no, on, off"
 
 
+def _resolve_csv_appended(env_var_name: str, traitlet_value):
+    """Merge a traitlet List with the comma-separated env-var value (append).
+
+    Env *adds to* the traitlet list rather than replacing it — the use case
+    is per-pod profiles layering on an org-wide baseline. Whitespace around
+    each token is stripped, empty segments are dropped, and exact duplicates
+    are collapsed while preserving first-seen order.
+    """
+    base = list(traitlet_value or [])
+    raw = os.environ.get(env_var_name, "")
+    extras = [name.strip() for name in raw.split(",") if name.strip()]
+    return list(dict.fromkeys(base + extras))
+
+
 def _resolve_bool_with_env(env_var_name: str, fallback: bool | None) -> bool:
     """Resolve a boolean admin gate: env var wins if recognized, else fallback.
 
@@ -1712,7 +1726,8 @@ class NotebookIntelligence(ExtensionApp):
         help="""
         Extra directory names to skip when enumerating workspace files for
         the chat-sidebar @-mention picker. Merged with the built-in skip set
-        (`__pycache__`, `node_modules`, `.git`, `.ipynb_checkpoints`).
+        (`__pycache__`, `node_modules`); dotfiles and dot-directories are
+        already filtered separately, so entries starting with `.` are no-ops.
 
         The NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES env var (csv)
         appends to this list at server startup so spawn profiles can vary
@@ -1720,7 +1735,7 @@ class NotebookIntelligence(ExtensionApp):
 
         Match is by directory name only (not path), case-sensitive.
 
-        Example: ['build', 'dist', '.venv']
+        Example: ['build', 'dist', 'target']
         """,
         allow_none=True,
         config=True,
@@ -1981,16 +1996,11 @@ class NotebookIntelligence(ExtensionApp):
         )
         GetCapabilitiesHandler.allow_github_skill_import = allow_github_skill_import
         SkillsBaseHandler.allow_github_skill_import = allow_github_skill_import
-        env_extra_skips = os.environ.get(
-            "NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES", ""
-        ).strip()
-        env_extras = (
-            [name.strip() for name in env_extra_skips.split(",") if name.strip()]
-            if env_extra_skips
-            else []
-        )
         GetCapabilitiesHandler.additional_skipped_workspace_directories = (
-            list(self.additional_skipped_workspace_directories or []) + env_extras
+            _resolve_csv_appended(
+                "NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES",
+                self.additional_skipped_workspace_directories,
+            )
         )
         self._publish_policies(feature_policies, string_overrides)
         NotebookIntelligence.handlers = [

@@ -352,6 +352,52 @@ class TestResolveBoolWithEnv:
         assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", None) is False
 
 
+class TestResolveCsvAppended:
+    """The csv env-var merge for additive list traitlets (e.g.
+    ``additional_skipped_workspace_directories``). Env appends to the
+    traitlet rather than overriding so per-pod profiles can layer on
+    an org baseline."""
+
+    ENV = "NBI_TEST_CSV"
+
+    def test_env_unset_returns_traitlet_unchanged(self, monkeypatch):
+        monkeypatch.delenv(self.ENV, raising=False)
+        assert ext_module._resolve_csv_appended(self.ENV, ["foo"]) == ["foo"]
+
+    def test_traitlet_none_with_env_unset_returns_empty(self, monkeypatch):
+        monkeypatch.delenv(self.ENV, raising=False)
+        assert ext_module._resolve_csv_appended(self.ENV, None) == []
+
+    def test_empty_env_returns_traitlet(self):
+        with patch.dict("os.environ", {self.ENV: ""}):
+            assert ext_module._resolve_csv_appended(self.ENV, ["foo"]) == ["foo"]
+
+    def test_whitespace_only_env_returns_traitlet(self):
+        with patch.dict("os.environ", {self.ENV: "   "}):
+            assert ext_module._resolve_csv_appended(self.ENV, ["foo"]) == ["foo"]
+
+    def test_env_strips_whitespace_around_each_token(self):
+        with patch.dict("os.environ", {self.ENV: "  build , dist "}):
+            assert ext_module._resolve_csv_appended(self.ENV, []) == ["build", "dist"]
+
+    def test_env_filters_empty_segments(self):
+        with patch.dict("os.environ", {self.ENV: ",build,,dist,"}):
+            assert ext_module._resolve_csv_appended(self.ENV, []) == ["build", "dist"]
+
+    def test_env_appends_to_traitlet(self):
+        with patch.dict("os.environ", {self.ENV: "bar"}):
+            assert ext_module._resolve_csv_appended(self.ENV, ["foo"]) == ["foo", "bar"]
+
+    def test_dedupes_across_traitlet_and_env_preserving_order(self):
+        # Duplicate-across-sources is a common operator typo when an env-var
+        # layer is added on top of an existing baseline; the wire payload
+        # should stay tidy.
+        with patch.dict("os.environ", {self.ENV: "build,dist,build"}):
+            assert ext_module._resolve_csv_appended(
+                self.ENV, ["build", "foo"]
+            ) == ["build", "foo", "dist"]
+
+
 class TestSkillBundleFileHandler:
     def test_write_and_read_bundle_file(self, skill_manager):
         skill_manager.create_skill("user", "bun", "d", [], "")

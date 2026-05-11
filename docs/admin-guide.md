@@ -337,12 +337,14 @@ The env var wins over the traitlet and is resolved at server startup. Recognized
 
 ### Tuning the chat-sidebar workspace file picker
 
-The @-mention picker in the chat sidebar enumerates files from the JupyterLab working directory and skips a built-in set of directories (`__pycache__`, `node_modules`) plus any dotfiles/dot-directories.
+**Audience:** server admins. End users can't override this — ask your admin to add or remove entries.
+
+The @-mention picker in the chat sidebar enumerates files from the JupyterLab working directory and skips a built-in set of directories (`__pycache__`, `node_modules`) plus any dotfiles/dot-directories. Because dot-prefixed names are filtered separately, entries starting with `.` in the list below are no-ops; list non-dot names only.
 
 To extend the directory skip set without editing the codebase:
 
 ```python
-c.NotebookIntelligence.additional_skipped_workspace_directories = ["build", "dist", ".venv"]
+c.NotebookIntelligence.additional_skipped_workspace_directories = ["build", "dist", "target"]
 ```
 
 Match is by directory name only (not path), case-sensitive. Use this when a project has standard build outputs the picker shouldn't surface.
@@ -353,7 +355,7 @@ To vary the list per spawn profile, append entries via env at pod startup:
 NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES=tmp,artifacts
 ```
 
-The env var is concatenated with the traitlet value at server startup; both are merged with the built-in skip set on the frontend.
+The env var **appends** to the traitlet value at server startup (in contrast to `NBI_ALLOW_GITHUB_SKILL_IMPORT` and the `NBI_*_POLICY` env vars, which override). Duplicates are collapsed; both lists are then merged with the built-in skip set on the frontend.
 
 ---
 
