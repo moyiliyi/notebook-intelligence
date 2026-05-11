@@ -52,6 +52,10 @@ def _make_handler(handler_cls, body: bytes = b"", query_args: dict | None = None
     handler._parse_json_body = lambda: SkillsBaseHandler._parse_json_body(handler)
     handler._bundle_rel_path = lambda: SkillsBaseHandler._bundle_rel_path(handler)
     handler._error = lambda exc: SkillsBaseHandler._error(handler, exc)
+    handler._reject_if_github_import_disabled = (
+        lambda: SkillsBaseHandler._reject_if_github_import_disabled(handler)
+    )
+    handler.allow_github_skill_import = SkillsBaseHandler.allow_github_skill_import
     return handler
 
 
@@ -297,6 +301,55 @@ class TestSkillsImportHandlers:
         ):
             SkillsImportHandler.post(handler)
         handler.set_status.assert_called_with(409)
+
+    def test_preview_returns_403_when_disabled(self, skill_manager):
+        handler = _make_handler(
+            SkillsImportPreviewHandler,
+            body=json.dumps({"url": "https://github.com/owner/repo"}).encode(),
+        )
+        handler.allow_github_skill_import = False
+        SkillsImportPreviewHandler.post(handler)
+        handler.set_status.assert_called_with(403)
+        body = _parse_response(handler)
+        assert "disabled" in body["error"].lower()
+
+    def test_import_returns_403_when_disabled(self, skill_manager):
+        handler = _make_handler(
+            SkillsImportHandler,
+            body=json.dumps({
+                "url": "https://github.com/owner/repo",
+                "scope": "user",
+            }).encode(),
+        )
+        handler.allow_github_skill_import = False
+        SkillsImportHandler.post(handler)
+        handler.set_status.assert_called_with(403)
+
+
+class TestResolveBoolWithEnv:
+    @pytest.mark.parametrize("value", ["true", "TRUE", "1", "yes", "On"])
+    def test_truthy_env_overrides_false_traitlet(self, value):
+        with patch.dict("os.environ", {"NBI_TEST_FLAG": value}):
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is True
+
+    @pytest.mark.parametrize("value", ["false", "FALSE", "0", "no", "Off"])
+    def test_falsy_env_overrides_true_traitlet(self, value):
+        with patch.dict("os.environ", {"NBI_TEST_FLAG": value}):
+            assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is False
+
+    def test_unset_env_returns_traitlet(self, monkeypatch):
+        monkeypatch.delenv("NBI_TEST_FLAG", raising=False)
+        assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True) is True
+        assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", False) is False
+
+    def test_invalid_env_raises(self):
+        with patch.dict("os.environ", {"NBI_TEST_FLAG": "maybe"}):
+            with pytest.raises(ValueError, match="NBI_TEST_FLAG"):
+                ext_module._resolve_bool_with_env("NBI_TEST_FLAG", True)
+
+    def test_none_fallback_is_treated_as_false(self, monkeypatch):
+        monkeypatch.delenv("NBI_TEST_FLAG", raising=False)
+        assert ext_module._resolve_bool_with_env("NBI_TEST_FLAG", None) is False
 
 
 class TestSkillBundleFileHandler:

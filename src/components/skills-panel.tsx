@@ -66,6 +66,9 @@ export function SettingsPanelComponentSkills(_props: any): JSX.Element {
   const [importOpen, setImportOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [allowGithubImport, setAllowGithubImport] = useState(
+    NBIAPI.config.allowGithubSkillImport
+  );
   const hasManagedSkills = skills.some(s => s.managed);
 
   const refresh = async () => {
@@ -91,9 +94,14 @@ export function SettingsPanelComponentSkills(_props: any): JSX.Element {
     const listener = () => {
       refresh();
     };
+    const configListener = () => {
+      setAllowGithubImport(NBIAPI.config.allowGithubSkillImport);
+    };
     NBIAPI.skillsReloaded.connect(listener);
+    NBIAPI.configChanged.connect(configListener);
     return () => {
       NBIAPI.skillsReloaded.disconnect(listener);
+      NBIAPI.configChanged.disconnect(configListener);
     };
   }, []);
 
@@ -299,15 +307,17 @@ export function SettingsPanelComponentSkills(_props: any): JSX.Element {
               </div>
             </button>
           )}
-          <button
-            className="jp-Dialog-button jp-mod-reject jp-mod-styled"
-            onClick={() => setImportOpen(true)}
-            title="Import from GitHub"
-          >
-            <div className="jp-Dialog-buttonLabel">
-              {hasManagedSkills ? 'Import' : 'Import from GitHub'}
-            </div>
-          </button>
+          {allowGithubImport && (
+            <button
+              className="jp-Dialog-button jp-mod-reject jp-mod-styled"
+              onClick={() => setImportOpen(true)}
+              title="Import from GitHub"
+            >
+              <div className="jp-Dialog-buttonLabel">
+                {hasManagedSkills ? 'Import' : 'Import from GitHub'}
+              </div>
+            </button>
+          )}
           <button
             className="jp-Dialog-button jp-mod-reject jp-mod-styled"
             onClick={() =>
