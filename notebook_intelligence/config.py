@@ -3,7 +3,9 @@
 import json
 import logging
 import os
+import stat
 import sys
+import tempfile
 from typing import Optional
 
 from notebook_intelligence.feature_flags import (
@@ -94,11 +96,8 @@ class NBIConfig:
         # TODO: save only diff
         os.makedirs(self.nbi_user_dir, exist_ok=True)
 
-        with open(self.user_config_file, 'w') as file:
-            json.dump(self.user_config, file, indent=2)
-
-        with open(self.user_mcp_file, 'w') as file:
-            json.dump(self.user_mcp, file, indent=2)
+        _atomic_write_json(self.user_config_file, self.user_config)
+        _atomic_write_json(self.user_mcp_file, self.user_mcp)
 
     def get(self, key, default=None):
         return self.user_config.get(key, self.env_config.get(key, default))
@@ -211,3 +210,71 @@ class NBIConfig:
         active_rules = self.active_rules.copy()
         active_rules[filename] = active
         self.set('active_rules', active_rules)
+
+
+def _atomic_write_json(target: str, payload: dict) -> None:
+    """Crash-safe replacement for ``open(target, 'w') + json.dump``.
+
+    Plain truncating writes leave the destination empty (or partial)
+    if the process is killed mid-write — the next launch then chokes on
+    a corrupt config. Write to a sibling tempfile, ``fsync``, and
+    ``os.replace`` so the swap is atomic on POSIX and atomic-ish on
+    Windows.
+
+    Symlink-preserving: a user who symlinks ``~/.jupyter/nbi/config.json``
+    to a shared config file expects ``save()`` to update the link's
+    target, not replace the link itself. Resolve via ``realpath`` first.
+
+    Mode-preserving: ``mkstemp`` returns a 0o600 file; if the existing
+    config has different permissions (e.g. 0o644 for a shared install),
+    re-apply them after the swap so the user's chmod isn't silently
+    undone.
+
+    Durability: ``fsync`` the tempfile, then ``fsync`` the target's
+    parent directory on POSIX so the rename itself survives a crash.
+    """
+    real_target = os.path.realpath(target)
+    target_dir = os.path.dirname(real_target) or '.'
+    existing_mode = None
+    try:
+        existing_mode = stat.S_IMODE(os.stat(real_target).st_mode)
+    except FileNotFoundError:
+        pass
+    fd, tmp_path = tempfile.mkstemp(
+        prefix='.' + os.path.basename(real_target) + '.',
+        suffix='.tmp',
+        dir=target_dir,
+    )
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            json.dump(payload, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if existing_mode is not None:
+            try:
+                os.chmod(tmp_path, existing_mode)
+            except OSError:
+                # Some filesystems (FAT, certain network mounts) reject chmod;
+                # the swap itself is still safe, just lose the mode bits.
+                pass
+        os.replace(tmp_path, real_target)
+    except Exception:
+        # Best-effort cleanup — if replace failed the tempfile is dangling.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    # ``os.replace`` makes the new inode visible, but until the directory
+    # entry is fsynced a power-loss can still leave the rename unrecorded
+    # on POSIX. Windows has no ``O_RDONLY`` directory descriptor, so skip
+    # there and rely on its rename semantics.
+    if hasattr(os, 'O_DIRECTORY'):
+        try:
+            dir_fd = os.open(target_dir, os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
