@@ -160,6 +160,20 @@ _FALSE_VALUES = frozenset({"false", "0", "no", "off"})
 _BOOL_ENV_VOCAB = "true, false, 1, 0, yes, no, on, off"
 
 
+def _resolve_csv_appended(env_var_name: str, traitlet_value):
+    """Merge a traitlet List with the comma-separated env-var value (append).
+
+    Env *adds to* the traitlet list rather than replacing it — the use case
+    is per-pod profiles layering on an org-wide baseline. Whitespace around
+    each token is stripped, empty segments are dropped, and exact duplicates
+    are collapsed while preserving first-seen order.
+    """
+    base = list(traitlet_value or [])
+    raw = os.environ.get(env_var_name, "")
+    extras = [name.strip() for name in raw.split(",") if name.strip()]
+    return list(dict.fromkeys(base + extras))
+
+
 def _resolve_bool_with_env(env_var_name: str, fallback: bool | None) -> bool:
     """Resolve a boolean admin gate: env var wins if recognized, else fallback.
 
@@ -305,6 +319,7 @@ class GetCapabilitiesHandler(APIHandler):
     allow_enabling_providers_with_env = False
     enable_chat_feedback = False
     allow_github_skill_import = True
+    additional_skipped_workspace_directories = []
     feature_policies = {}
     string_overrides = {}
 
@@ -392,6 +407,7 @@ class GetCapabilitiesHandler(APIHandler):
             "default_chat_mode": nbi_config.default_chat_mode,
             "chat_feedback_enabled": self.enable_chat_feedback,
             "allow_github_skill_import": self.allow_github_skill_import,
+            "additional_skipped_workspace_directories": self.additional_skipped_workspace_directories,
             "cell_output_features": _build_cell_output_features_response(
                 self.feature_policies.get("explain_error", POLICY_USER_CHOICE),
                 self.feature_policies.get("output_followup", POLICY_USER_CHOICE),
@@ -1704,6 +1720,27 @@ class NotebookIntelligence(ExtensionApp):
         config=True,
     )
 
+    additional_skipped_workspace_directories = List(
+        trait=Unicode(),
+        default_value=None,
+        help="""
+        Extra directory names to skip when enumerating workspace files for
+        the chat-sidebar @-mention picker. Merged with the built-in skip set
+        (`__pycache__`, `node_modules`); dotfiles and dot-directories are
+        already filtered separately, so entries starting with `.` are no-ops.
+
+        The NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES env var (csv)
+        appends to this list at server startup so spawn profiles can vary
+        the policy without forking config.
+
+        Match is by directory name only (not path), case-sensitive.
+
+        Example: ['build', 'dist', 'target']
+        """,
+        allow_none=True,
+        config=True,
+    )
+
     explain_error_policy = TraitletEnum(
         list(VALID_POLICIES),
         default_value=POLICY_USER_CHOICE,
@@ -1959,6 +1996,12 @@ class NotebookIntelligence(ExtensionApp):
         )
         GetCapabilitiesHandler.allow_github_skill_import = allow_github_skill_import
         SkillsBaseHandler.allow_github_skill_import = allow_github_skill_import
+        GetCapabilitiesHandler.additional_skipped_workspace_directories = (
+            _resolve_csv_appended(
+                "NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES",
+                self.additional_skipped_workspace_directories,
+            )
+        )
         self._publish_policies(feature_policies, string_overrides)
         NotebookIntelligence.handlers = [
             (route_pattern_capabilities, GetCapabilitiesHandler),

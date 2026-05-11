@@ -1133,6 +1133,11 @@ function SidebarComponent(props: any) {
     try {
       const contentsManager = props.getApp().serviceManager.contents;
 
+      const skipDirectoryNames = new Set<string>([
+        ...SKIPPED_WORKSPACE_DIRECTORIES,
+        ...NBIAPI.config.additionalSkippedWorkspaceDirectories
+      ]);
+
       while (
         directoriesToScan.length > 0 &&
         discoveredFiles.length < MAX_WORKSPACE_FILE_SCAN_COUNT
@@ -1160,7 +1165,7 @@ function SidebarComponent(props: any) {
           }
 
           if (entry.type === 'directory') {
-            if (!SKIPPED_WORKSPACE_DIRECTORIES.has(entry.name)) {
+            if (!skipDirectoryNames.has(entry.name)) {
               directoriesToScan.push(entry.path);
             }
             continue;

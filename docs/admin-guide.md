@@ -75,30 +75,32 @@ If users share a home directory across nodes (NFS-backed shared HPC, classroom l
 
 The full surface, in one table.
 
-| Name                                | Type | Default                     | Source                             | Purpose                                                                                                                                                                         |
-| ----------------------------------- | ---- | --------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `disabled_providers`                | List | `[]`                        | traitlet on `NotebookIntelligence` | Hide providers from the user dropdown. Values: `github-copilot`, `ollama`, `litellm-compatible`, `openai-compatible`.                                                           |
-| `allow_enabling_providers_with_env` | Bool | `False`                     | traitlet                           | If true, `NBI_ENABLED_PROVIDERS` re-enables hidden providers per pod.                                                                                                           |
-| `NBI_ENABLED_PROVIDERS`             | csv  | unset                       | env                                | Comma-separated provider IDs to re-enable. Effective only when `allow_enabling_providers_with_env=True`.                                                                        |
-| `disabled_tools`                    | List | `[]`                        | traitlet                           | Hide built-in tools from agent mode. Values listed in [Restricting features](#restricting-features-for-managed-deployments).                                                    |
-| `allow_enabling_tools_with_env`     | Bool | `False`                     | traitlet                           | If true, `NBI_ENABLED_BUILTIN_TOOLS` re-enables hidden tools per pod.                                                                                                           |
-| `NBI_ENABLED_BUILTIN_TOOLS`         | csv  | unset                       | env                                | Comma-separated tool IDs to re-enable. Effective only when `allow_enabling_tools_with_env=True`.                                                                                |
-| `enable_chat_feedback`              | Bool | `False`                     | traitlet                           | Enables thumbs-up/down UI in chat and emits in-process `telemetry` events.                                                                                                      |
-| `allow_github_skill_import`         | Bool | `True`                      | traitlet                           | When `False`, hides the **Import from GitHub** button in the Skills panel and rejects `/skills/import` POSTs with 403. Does not affect the managed-skills reconciler.           |
-| `NBI_ALLOW_GITHUB_SKILL_IMPORT`     | bool | unset                       | env (overrides traitlet)           | Per-pod override for `allow_github_skill_import`. Accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` (case-insensitive). Useful for varying the policy across spawn profiles. |
-| `skills_manifest`                   | str  | `""`                        | traitlet                           | URL or filesystem path to a managed-skills manifest. See [`docs/skills.md`](skills.md#managed-skills-via-an-org-manifest).                                                      |
-| `NBI_SKILLS_MANIFEST`               | str  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                            |
-| `skills_manifest_interval`          | int  | `86400`                     | traitlet                           | Seconds between reconciles.                                                                                                                                                     |
-| `NBI_SKILLS_MANIFEST_INTERVAL`      | int  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                            |
-| `managed_skills_token`              | str  | `""`                        | traitlet                           | Bearer token for managed-skills GitHub fetches.                                                                                                                                 |
-| `NBI_MANAGED_SKILLS_TOKEN`          | str  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                            |
-| `NBI_GH_ACCESS_TOKEN_PASSWORD`      | str  | `nbi-access-token-password` | env                                | Password used to encrypt the stored Copilot token in `user-data.json`. **Change in multi-tenant deployments.**                                                                  |
-| `NBI_RULES_AUTO_RELOAD`             | bool | `true`                      | env                                | When `false`, ruleset edits require a JupyterLab restart to take effect.                                                                                                        |
-| `NBI_CLAUDE_CLI_PATH`               | str  | unset                       | env                                | Absolute path to the Claude Code CLI binary. When unset, NBI looks up `claude` on `PATH`.                                                                                       |
-| `NBI_GHE_SUBDOMAIN`                 | str  | `""`                        | env                                | GitHub Enterprise subdomain for GitHub Copilot users on a GHE tenant. Empty selects github.com.                                                                                 |
-| `NBI_LOG_LEVEL`                     | str  | `INFO`                      | env                                | Python logging level for the `notebook_intelligence` logger.                                                                                                                    |
-| `GITHUB_TOKEN`, `GH_TOKEN`          | str  | unset                       | env                                | Used (in that order) by user-initiated skill imports for GitHub auth. Falls back to `gh` CLI auth.                                                                              |
-| `NBI_*_POLICY`                      | str  | `user-choice`               | env                                | Lock individual Settings panel toggles. See [README → Admin policies](../README.md#admin-policies) for the full list of `*_POLICY` env vars and matching traitlets.             |
+| Name                                           | Type | Default                     | Source                             | Purpose                                                                                                                                                                                             |
+| ---------------------------------------------- | ---- | --------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `disabled_providers`                           | List | `[]`                        | traitlet on `NotebookIntelligence` | Hide providers from the user dropdown. Values: `github-copilot`, `ollama`, `litellm-compatible`, `openai-compatible`.                                                                               |
+| `allow_enabling_providers_with_env`            | Bool | `False`                     | traitlet                           | If true, `NBI_ENABLED_PROVIDERS` re-enables hidden providers per pod.                                                                                                                               |
+| `NBI_ENABLED_PROVIDERS`                        | csv  | unset                       | env                                | Comma-separated provider IDs to re-enable. Effective only when `allow_enabling_providers_with_env=True`.                                                                                            |
+| `disabled_tools`                               | List | `[]`                        | traitlet                           | Hide built-in tools from agent mode. Values listed in [Restricting features](#restricting-features-for-managed-deployments).                                                                        |
+| `allow_enabling_tools_with_env`                | Bool | `False`                     | traitlet                           | If true, `NBI_ENABLED_BUILTIN_TOOLS` re-enables hidden tools per pod.                                                                                                                               |
+| `NBI_ENABLED_BUILTIN_TOOLS`                    | csv  | unset                       | env                                | Comma-separated tool IDs to re-enable. Effective only when `allow_enabling_tools_with_env=True`.                                                                                                    |
+| `enable_chat_feedback`                         | Bool | `False`                     | traitlet                           | Enables thumbs-up/down UI in chat and emits in-process `telemetry` events.                                                                                                                          |
+| `additional_skipped_workspace_directories`     | List | `[]`                        | traitlet                           | Extra directory names to skip in the chat-sidebar @-mention workspace file picker. Merged with the built-in skips (`__pycache__`, `node_modules`). Match is by directory name only, case-sensitive. |
+| `NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES` | csv  | unset                       | env (appends to traitlet)          | Comma-separated extra directory names. Resolved at server startup and concatenated with the traitlet value, so a spawn profile can add to (rather than replace) the org-wide list.                  |
+| `allow_github_skill_import`                    | Bool | `True`                      | traitlet                           | When `False`, hides the **Import from GitHub** button in the Skills panel and rejects `/skills/import` POSTs with 403. Does not affect the managed-skills reconciler.                               |
+| `NBI_ALLOW_GITHUB_SKILL_IMPORT`                | bool | unset                       | env (overrides traitlet)           | Per-pod override for `allow_github_skill_import`. Accepts `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off` (case-insensitive). Useful for varying the policy across spawn profiles.                     |
+| `skills_manifest`                              | str  | `""`                        | traitlet                           | URL or filesystem path to a managed-skills manifest. See [`docs/skills.md`](skills.md#managed-skills-via-an-org-manifest).                                                                          |
+| `NBI_SKILLS_MANIFEST`                          | str  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                                                |
+| `skills_manifest_interval`                     | int  | `86400`                     | traitlet                           | Seconds between reconciles.                                                                                                                                                                         |
+| `NBI_SKILLS_MANIFEST_INTERVAL`                 | int  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                                                |
+| `managed_skills_token`                         | str  | `""`                        | traitlet                           | Bearer token for managed-skills GitHub fetches.                                                                                                                                                     |
+| `NBI_MANAGED_SKILLS_TOKEN`                     | str  | unset                       | env (overrides traitlet)           | Same as above; env takes precedence.                                                                                                                                                                |
+| `NBI_GH_ACCESS_TOKEN_PASSWORD`                 | str  | `nbi-access-token-password` | env                                | Password used to encrypt the stored Copilot token in `user-data.json`. **Change in multi-tenant deployments.**                                                                                      |
+| `NBI_RULES_AUTO_RELOAD`                        | bool | `true`                      | env                                | When `false`, ruleset edits require a JupyterLab restart to take effect.                                                                                                                            |
+| `NBI_CLAUDE_CLI_PATH`                          | str  | unset                       | env                                | Absolute path to the Claude Code CLI binary. When unset, NBI looks up `claude` on `PATH`.                                                                                                           |
+| `NBI_GHE_SUBDOMAIN`                            | str  | `""`                        | env                                | GitHub Enterprise subdomain for GitHub Copilot users on a GHE tenant. Empty selects github.com.                                                                                                     |
+| `NBI_LOG_LEVEL`                                | str  | `INFO`                      | env                                | Python logging level for the `notebook_intelligence` logger.                                                                                                                                        |
+| `GITHUB_TOKEN`, `GH_TOKEN`                     | str  | unset                       | env                                | Used (in that order) by user-initiated skill imports for GitHub auth. Falls back to `gh` CLI auth.                                                                                                  |
+| `NBI_*_POLICY`                                 | str  | `user-choice`               | env                                | Lock individual Settings panel toggles. See [README → Admin policies](../README.md#admin-policies) for the full list of `*_POLICY` env vars and matching traitlets.                                 |
 
 Configure traitlets in `jupyter_server_config.py`:
 
@@ -332,6 +334,28 @@ NBI_ALLOW_GITHUB_SKILL_IMPORT=false
 ```
 
 The env var wins over the traitlet and is resolved at server startup. Recognized values: `true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`, case-insensitive. Unrecognized values raise at startup so a typo can't silently flip the policy.
+
+### Tuning the chat-sidebar workspace file picker
+
+**Audience:** server admins. End users can't override this — ask your admin to add or remove entries.
+
+The @-mention picker in the chat sidebar enumerates files from the JupyterLab working directory and skips a built-in set of directories (`__pycache__`, `node_modules`) plus any dotfiles/dot-directories. Because dot-prefixed names are filtered separately, entries starting with `.` in the list below are no-ops; list non-dot names only.
+
+To extend the directory skip set without editing the codebase:
+
+```python
+c.NotebookIntelligence.additional_skipped_workspace_directories = ["build", "dist", "target"]
+```
+
+Match is by directory name only (not path), case-sensitive. Use this when a project has standard build outputs the picker shouldn't surface.
+
+To vary the list per spawn profile, append entries via env at pod startup:
+
+```bash
+NBI_ADDITIONAL_SKIPPED_WORKSPACE_DIRECTORIES=tmp,artifacts
+```
+
+The env var **appends** to the traitlet value at server startup (in contrast to `NBI_ALLOW_GITHUB_SKILL_IMPORT` and the `NBI_*_POLICY` env vars, which override). Duplicates are collapsed; both lists are then merged with the built-in skip set on the frontend.
 
 ---
 

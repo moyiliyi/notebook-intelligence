@@ -290,6 +290,11 @@ export class NBIConfig {
     return this.capabilities.allow_github_skill_import !== false;
   }
 
+  get additionalSkippedWorkspaceDirectories(): string[] {
+    const v = this.capabilities.additional_skipped_workspace_directories;
+    return Array.isArray(v) ? v : [];
+  }
+
   get cellOutputFeatures(): ICellOutputFeatures {
     const v = this.capabilities.cell_output_features ?? {};
     return {
