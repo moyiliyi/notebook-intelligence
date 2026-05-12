@@ -2988,6 +2988,19 @@ function SidebarComponent(props: any) {
     // have to remember the slash command (issue #237). Also useful when
     // the Claude SDK client is wedged — restarting the session reconnects
     // the agent.
+    if (copilotRequestInProgress) {
+      // Cancel any in-flight response before clearing local state. Without
+      // this, stream deltas tied to the old messageId keep arriving against
+      // an empty chat-messages list and silently re-populate it from the
+      // old conversation.
+      NBIAPI.sendWebSocketMessage(
+        lastMessageId.current,
+        RequestDataType.CancelChatRequest,
+        { chatId }
+      );
+      lastMessageId.current = '';
+      setCopilotRequestInProgress(false);
+    }
     setChatMessages([]);
     setPrompt('');
     setSelectedContextFiles([]);
@@ -3011,7 +3024,13 @@ function SidebarComponent(props: any) {
       setNewChatNoticeVisible(false);
       newChatNoticeTimerRef.current = null;
     }, 3000);
-  }, [chatId, resetChatId, resetPrefixSuggestions]);
+    // Move focus to the prompt textarea so the user can immediately type
+    // their first message in the fresh session. Defer past the React
+    // commit so the input has re-rendered with the cleared prompt value.
+    window.requestAnimationFrame(() => {
+      promptInputRef.current?.focus();
+    });
+  }, [chatId, copilotRequestInProgress, resetChatId, resetPrefixSuggestions]);
 
   useEffect(() => {
     const handler = () => {
@@ -3089,16 +3108,14 @@ function SidebarComponent(props: any) {
           <VscSettingsGear />
         </div>
       </div>
-      <div className="nbi-skills-reloaded-banner-live" aria-live="polite">
+      <div className="nbi-status-banner-live" aria-live="polite">
         {skillsReloadedVisible && (
-          <div className="nbi-skills-reloaded-banner">
+          <div className="nbi-status-banner">
             Skills reloaded — applied to the current session.
           </div>
         )}
         {newChatNoticeVisible && (
-          <div className="nbi-skills-reloaded-banner">
-            New chat session started.
-          </div>
+          <div className="nbi-status-banner">New chat session started.</div>
         )}
       </div>
       {!chatEnabled && !ghLoginRequired && (
