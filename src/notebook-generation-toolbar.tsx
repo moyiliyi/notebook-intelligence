@@ -20,6 +20,7 @@ import {
   NOTEBOOK_GENERATION_PROGRESS_EVENT
 } from './notebook-generation';
 import { NotebookGenerationPopover } from './components/notebook-generation-popover';
+import { NBIAPI } from './api';
 
 const TOOLBAR_BUTTON_NAME = 'nbi-generate-notebook';
 const TOOLBAR_STATUS_NAME = 'nbi-generate-notebook-status';
@@ -259,7 +260,10 @@ export class NotebookGenerationToolbarExtension
     const button: ToolbarButton = new ToolbarButton({
       icon: this._options.icon,
       onClick: () => controller.openPopover(button),
-      tooltip: 'Update active notebook with AI'
+      tooltip: NBIAPI.config.isInClaudeCodeMode
+        ? 'Update active notebook with AI'
+        : 'Update active notebook with AI (only available in Claude Code mode)',
+      enabled: NBIAPI.config.isInClaudeCodeMode
     });
     button.addClass('nbi-notebook-generation-toolbar-button');
     panel.toolbar.insertAfter('cellType', TOOLBAR_BUTTON_NAME, button);
