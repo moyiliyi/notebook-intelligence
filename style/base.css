@@ -2294,11 +2294,10 @@ svg.access-token-warning {
 
 .nbi-cell-output-toolbar {
   position: absolute;
-  top: 4px;
+  top: 0;
   right: 8px;
   display: flex;
   gap: 2px;
-  padding: 2px;
   background-color: var(--jp-layout-color1);
   border: 1px solid var(--jp-border-color2);
   border-radius: 4px;
