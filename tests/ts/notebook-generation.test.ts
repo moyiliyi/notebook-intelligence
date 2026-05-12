@@ -10,7 +10,7 @@ describe('buildNotebookGenerationPrompt', () => {
   it('prepends the templated prefix described in the issue', () => {
     const result = buildNotebookGenerationPrompt('plot a sine wave');
     expect(result).toBe(
-      'Update active notebook based on this request: plot a sine wave'
+      "Update active notebook based on the user request. Don't create a new notebook, always update the active one. User request: plot a sine wave"
     );
   });
 
