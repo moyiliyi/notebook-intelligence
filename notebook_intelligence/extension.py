@@ -60,6 +60,7 @@ thread_safe_websocket_connector: ThreadSafeWebSocketConnector = None
 
 def _token_count(text: str) -> int:
     return len(tiktoken_encoding.encode(text))
+shared_chat_history = None
 
 
 def _truncate_context_content(content: str, token_budget: int) -> str:
@@ -401,6 +402,8 @@ class GetCapabilitiesHandler(APIHandler):
             "claude_settings": _scrub_credentials_for_wire(
                 nbi_config.claude_settings, self.string_overrides
             ),
+            "mysql_config": nbi_config.mysql_config,
+            "history_config": nbi_config.history_config,
             "claude_models": ai_service_manager.claude_models,
             # Drives launcher-tile visibility (issue #183).
             "claude_cli_available": shutil.which("claude") is not None,
@@ -438,7 +441,7 @@ class ConfigHandler(APIHandler):
     string_overrides = {}
 
     @tornado.web.authenticated
-    def post(self):
+    async def post(self):
         data = json.loads(self.request.body)
         valid_keys = set([
             "default_chat_mode",
@@ -451,6 +454,8 @@ class ConfigHandler(APIHandler):
             "enable_explain_error",
             "enable_output_followup",
             "enable_output_toolbar",
+            "mysql_config",
+            "history_config",
         ])
         # Top-level keys whose write is rejected outright when locked.
         locked_keys = set()
@@ -476,6 +481,7 @@ class ConfigHandler(APIHandler):
 
         has_model_change = False
         has_claude_settings_change = False
+        has_mysql_settings_change = False
         for key in data:
             if key in locked_keys:
                 continue
@@ -531,10 +537,38 @@ class ConfigHandler(APIHandler):
                 if isinstance(default_chat_participant, ClaudeCodeChatParticipant):
                     # needed to disconnect
                     default_chat_participant.update_client_debounced()
+            elif key == "mysql_config":
+                has_mysql_settings_change = True
+            elif key == "history_config":
+                has_mysql_settings_change = True
 
         ai_service_manager.nbi_config.save()
         if has_model_change or has_claude_settings_change:
             ai_service_manager.update_models_from_config()
+        if has_mysql_settings_change:
+            ai_service_manager.update_mysql_manager()
+            history_cfg = ai_service_manager.nbi_config.history_config
+            if history_cfg.get("mode") == "mysql":
+                # Validate MySQL immediately and downgrade to `none` on failure.
+                ok, err = await ai_service_manager.mysql_manager.test_connection()
+                if not ok:
+                    mysql_cfg = ai_service_manager.nbi_config.mysql_config.copy()
+                    mysql_cfg["enabled"] = False
+                    ai_service_manager.nbi_config.set("mysql_config", mysql_cfg)
+                    ai_service_manager.nbi_config.set("history_config", {
+                        "mode": "none",
+                        "local_max_messages": history_cfg.get("local_max_messages", 10)
+                    })
+                    ai_service_manager.nbi_config.save()
+                    ai_service_manager.update_mysql_manager()
+                if not ok:
+                    self.set_status(400)
+                    self.finish(json.dumps({
+                        "error": f"MySQL connection failed: {err}. History mode has been switched to 'none'.",
+                        "history_config": ai_service_manager.nbi_config.history_config,
+                        "mysql_config": ai_service_manager.nbi_config.mysql_config
+                    }))
+                    return
         if has_claude_settings_change:
             default_chat_participant = ai_service_manager.default_chat_participant
             if isinstance(default_chat_participant, ClaudeCodeChatParticipant):
@@ -1094,7 +1128,7 @@ class ChatHistory:
     History of chat messages, key is chat id, value is list of messages
     keep the last 10 messages in the same chat participant
     """
-    MAX_MESSAGES = 10
+    DEFAULT_MAX_MESSAGES = 10
 
     def __init__(self):
         self.messages = {}
@@ -1110,6 +1144,12 @@ class ChatHistory:
         return False
 
     def add_message(self, chatId, message):
+        history_mode = ai_service_manager.nbi_config.history_config.get("mode", "local")
+        if history_mode == "none":
+            # In `none` mode, do not retain any in-memory transcript.
+            self.clear(chatId)
+            return
+
         if chatId not in self.messages:
             self.messages[chatId] = []
 
@@ -1124,22 +1164,29 @@ class ChatHistory:
                     self.messages[chatId] = []
 
         self.messages[chatId].append(message)
-        # limit number of messages kept in history
-        if len(self.messages[chatId]) > ChatHistory.MAX_MESSAGES:
-            self.messages[chatId] = self.messages[chatId][-ChatHistory.MAX_MESSAGES:]
+        # Limit in-memory history only for local mode.
+        if history_mode == "local":
+            max_messages = ai_service_manager.nbi_config.history_config.get(
+                "local_max_messages", ChatHistory.DEFAULT_MAX_MESSAGES
+            )
+            if len(self.messages[chatId]) > max_messages:
+                self.messages[chatId] = self.messages[chatId][-max_messages:]
 
     def get_history(self, chatId):
         return self.messages.get(chatId, [])
 
 class WebsocketCopilotResponseEmitter(ChatResponse):
-    def __init__(self, chatId, messageId, websocket_handler, chat_history):
+    def __init__(self, chatId, messageId, websocket_handler, chat_history, conversation_id=None):
         super().__init__()
         self.chatId = chatId
         self.messageId = messageId
         self.websocket_handler = websocket_handler
         self.chat_history = chat_history
+        self.conversation_id = conversation_id
         self.streamed_contents = []
         self.streamed_reasoning_contents = []
+        self.streamed_tool_calls = []
+        self.streamed_markdown_parts = []
 
     @property
     def chat_id(self) -> str:
@@ -1153,7 +1200,28 @@ class WebsocketCopilotResponseEmitter(ChatResponse):
         data_type = ResponseStreamDataType.LLMRaw if type(data) is dict else data.data_type
 
         if data_type == ResponseStreamDataType.Markdown:
-            self.chat_history.add_message(self.chatId, {"role": "assistant", "content": data.content, "reasoning_content": data.reasoning_content})
+            tool_calls = None
+            if isinstance(data.detail, dict) and data.detail.get("title") == "Parameters":
+                try:
+                    tool_calls = [{
+                        "type": "ui_tool_parameters",
+                        "arguments": json.loads(data.detail.get("content", "{}"))
+                    }]
+                except Exception:
+                    tool_calls = None
+
+            if data.content is not None:
+                self.streamed_contents.append(data.content)
+            if data.reasoning_content is not None:
+                self.streamed_reasoning_contents.append(data.reasoning_content)
+            if tool_calls is not None:
+                self.streamed_tool_calls.extend(tool_calls)
+            self.streamed_markdown_parts.append({
+                "type": "markdown",
+                "content": data.content or "",
+                "reasoning_content": data.reasoning_content,
+                "detail": data.detail
+            })
             data = {
                 "choices": [
                     {
@@ -1323,6 +1391,19 @@ class WebsocketCopilotResponseEmitter(ChatResponse):
                 self.streamed_contents.append(content)
             if reasoning_content is not None:
                 self.streamed_reasoning_contents.append(reasoning_content)
+        
+        # Now common part for all types to actually write to websocket
+        if data_type != ResponseStreamDataType.LLMRaw:
+            try:
+                self.websocket_handler.write_message({
+                    "id": self.messageId,
+                    "participant": self.participant_id,
+                    "type": BackendMessageType.StreamMessage,
+                    "data": data,
+                    "created": dt.datetime.now().isoformat()
+                })
+            except Exception:
+                pass
         else: # ResponseStreamDataType.LLMRaw
             if len(data.get("choices", [])) > 0:
                 delta = data["choices"][0].get("delta", {})
@@ -1333,24 +1414,62 @@ class WebsocketCopilotResponseEmitter(ChatResponse):
                 if reasoning_content is not None:
                     self.streamed_reasoning_contents.append(reasoning_content)
 
-        self.websocket_handler.write_message({
-            "id": self.messageId,
-            "participant": self.participant_id,
-            "type": BackendMessageType.StreamMessage,
-            "data": data,
-            "created": dt.datetime.now().isoformat()
-        })
-
+                try:
+                    self.websocket_handler.write_message({
+                        "id": self.messageId,
+                        "participant": self.participant_id,
+                        "type": BackendMessageType.StreamMessage,
+                        "data": data,
+                        "created": dt.datetime.now().isoformat()
+                    })
+                except Exception:
+                    # Connection might be closed, but we continue to collect results for history/MySQL
+                    pass
     def finish(self) -> None:
-        self.chat_history.add_message(self.chatId, {"role": "assistant", "content": "".join(self.streamed_contents), "reasoning_content": "".join(self.streamed_reasoning_contents)})
+        content = "".join(self.streamed_contents)
+        reasoning_content = "".join(self.streamed_reasoning_contents)
+        persisted_tool_calls = list(self.streamed_tool_calls)
+        if self.streamed_markdown_parts:
+            persisted_tool_calls.append({
+                "type": "ui_message_parts",
+                "parts": self.streamed_markdown_parts
+            })
+
+        if content or reasoning_content or persisted_tool_calls:
+            self.chat_history.add_message(
+                self.chatId,
+                {
+                    "role": "assistant",
+                    "content": content,
+                    "reasoning_content": reasoning_content,
+                    "tool_calls": persisted_tool_calls,
+                }
+            )
+
+            if self.conversation_id:
+                msg_id = str(uuid.uuid4())
+                ai_service_manager.mysql_manager.add_message(
+                    msg_id,
+                    self.conversation_id,
+                    "assistant",
+                    content,
+                    reasoning_content,
+                    tool_calls=persisted_tool_calls,
+                )
+
         self.streamed_contents = []
         self.streamed_reasoning_contents = []
-        self.websocket_handler.write_message({
-            "id": self.messageId,
-            "participant": self.participant_id,
-            "type": BackendMessageType.StreamEnd,
-            "data": {}
-        })
+        self.streamed_tool_calls = []
+        self.streamed_markdown_parts = []
+        try:
+            self.websocket_handler.write_message({
+                "id": self.messageId,
+                "participant": self.participant_id,
+                "type": BackendMessageType.StreamEnd,
+                "data": {}
+            })
+        except Exception:
+            pass
 
     async def run_ui_command(self, command: str, args: dict = {}) -> None:
         callback_id = str(uuid.uuid4())
@@ -1381,27 +1500,30 @@ class MessageCallbackHandlers:
     response_emitter: WebsocketCopilotResponseEmitter
     cancel_token: CancelTokenImpl
 
-class WebsocketCopilotHandler(websocket.WebSocketHandler):
-    # Cap WS message size at 4 MiB. Largest legitimate payload is a chat
-    # request with ~10 attached output-context items (each capped at 1 MiB
-    # by `coerce_payload`) + chat history; 4 MiB covers that without
-    # leaving the default 10 MiB headroom for memory amplification.
-    max_message_size = 4 * 1024 * 1024
+class WebsocketCopilotHandler(APIHandler, websocket.WebSocketHandler):
+    chat_history_ref = None
 
     def __init__(self, application, request, context_factory=None, **kwargs):
         super().__init__(application, request, **kwargs)
         # TODO: cleanup
         self._messageCallbackHandlers: dict[str, MessageCallbackHandlers] = {}
-        self.chat_history = ChatHistory()
+        global shared_chat_history
+        if shared_chat_history is None:
+            shared_chat_history = ChatHistory()
+        self.chat_history = shared_chat_history
+        WebsocketCopilotHandler.chat_history_ref = self.chat_history
         self._context_factory = context_factory or RuleContextFactory()
         ws_connector = ThreadSafeWebSocketConnector(self)
         ai_service_manager.websocket_connector = ws_connector
         github_copilot.websocket_connector = ws_connector
 
+    def check_origin(self, origin=None):
+        return True
+
     def open(self):
         pass
 
-    def on_message(self, message):
+    async def on_message(self, message):
         msg = json.loads(message)
 
         messageId = msg['id']
@@ -1421,8 +1543,28 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
                 extension_tools=toolSelections.get('extensions', {})
             )
 
+            # MySQL logging: Create conversation and log user message (combined to ensure order)
+            conversation_id = str(uuid.uuid4())
+            
+            # Better user detection for JupyterHub/TLJH and Jupyter Server 2.0+
+            user_id = os.environ.get('JUPYTERHUB_USER')
+            if not user_id:
+                user = self.current_user
+                if user:
+                    user_id = getattr(user, 'name', str(user))
+                else:
+                    user_id = "unknown"
+
+            user_message_id = str(uuid.uuid4())
+            ai_service_manager.mysql_manager.create_conversation_with_message(
+                conversation_id, user_id, chatId, chat_mode.id,
+                user_message_id, "user", prompt
+            )
+
             is_claude_code_mode = ai_service_manager.is_claude_code_mode
-            chat_history = self.chat_history.get_history(chatId)
+            # Copy current chat history for request context building, do not
+            # mutate shared in-memory history with transient context entries.
+            chat_history = list(await self.chat_history.get_history(chatId))
             chat_history_initial_size = len(chat_history)
 
             current_directory = data.get('currentDirectory')
@@ -1535,8 +1677,11 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
                 chat_history.append({"role": "user", "content": context_message})
 
             chat_history.append({"role": "user", "content": prompt})
+            # Persist the real user prompt in shared in-memory history so
+            # refresh fallback stays consistent even when DB data is delayed.
+            self.chat_history.add_message(chatId, {"role": "user", "content": prompt})
 
-            response_emitter = WebsocketCopilotResponseEmitter(chatId, messageId, self, self.chat_history)
+            response_emitter = WebsocketCopilotResponseEmitter(chatId, messageId, self, self.chat_history, conversation_id=conversation_id)
             cancel_token = CancelTokenImpl()
             self._messageCallbackHandlers[messageId] = MessageCallbackHandlers(response_emitter, cancel_token)
             
@@ -1550,7 +1695,7 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
 
             # last prompt is added later
             request_chat_history = chat_history[chat_history_initial_size:-1] if is_claude_code_mode else chat_history[:-1]
-            thread = threading.Thread(target=asyncio.run, args=(ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, tool_selection=tool_selection, prompt=prompt, chat_history=request_chat_history, cancel_token=cancel_token, rule_context=rule_context), response_emitter),))
+            thread = threading.Thread(target=asyncio.run, args=(ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, tool_selection=tool_selection, prompt=prompt, chat_history=request_chat_history, cancel_token=cancel_token, rule_context=rule_context, conversation_id=conversation_id), response_emitter),))
             thread.start()
         elif messageType == RequestDataType.GenerateCode:
             data = msg['data']
@@ -1563,6 +1708,25 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
             filename = data['filename']
             is_claude_code_mode = ai_service_manager.is_claude_code_mode
             chat_mode = ChatMode('inline-chat', 'Inline Chat') if is_claude_code_mode else ChatMode('ask', 'Ask')
+
+            # MySQL logging: Create conversation and log user message (combined)
+            conversation_id = str(uuid.uuid4())
+            
+            # Better user detection for JupyterHub/TLJH and Jupyter Server 2.0+
+            user_id = os.environ.get('JUPYTERHUB_USER')
+            if not user_id:
+                user = self.current_user
+                if user:
+                    user_id = getattr(user, 'name', str(user))
+                else:
+                    user_id = "unknown"
+
+            user_message_id = str(uuid.uuid4())
+            ai_service_manager.mysql_manager.create_conversation_with_message(
+                conversation_id, user_id, chatId, "inline-chat",
+                user_message_id, "user", prompt
+            )
+
             if prefix != '':
                 self.chat_history.add_message(chatId, {"role": "user", "content": f"This code section comes before the code section you will generate, use as context. Leading content: ```{prefix}```"})
             if suffix != '':
@@ -1570,7 +1734,7 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
             if existing_code != '':
                 self.chat_history.add_message(chatId, {"role": "user", "content": f"You are asked to modify the existing code. Generate a replacement for this existing code : ```{existing_code}```"})
             self.chat_history.add_message(chatId, {"role": "user", "content": f"Generate code for: {prompt}"})
-            response_emitter = WebsocketCopilotResponseEmitter(chatId, messageId, self, self.chat_history)
+            response_emitter = WebsocketCopilotResponseEmitter(chatId, messageId, self, self.chat_history, conversation_id=conversation_id)
             cancel_token = CancelTokenImpl()
             self._messageCallbackHandlers[messageId] = MessageCallbackHandlers(response_emitter, cancel_token)
             existing_code_message = " Update the existing code section and return a modified version. Don't just return the update, recreate the existing code section with the update." if existing_code != '' else ''
@@ -1584,7 +1748,8 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
                 root_dir=NotebookIntelligence.root_dir
             )
             
-            thread = threading.Thread(target=asyncio.run, args=(ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, prompt=prompt, chat_history=self.chat_history.get_history(chatId), cancel_token=cancel_token, rule_context=rule_context), response_emitter, options={"system_prompt": f"You are an assistant that generates code for '{language}' language. You generate code between existing leading and trailing code sections.{existing_code_message} Be concise and return only code as a response. Don't include leading content or trailing content in your response, they are provided only for context. You can reuse methods and symbols defined in leading and trailing content."}),))
+            chat_history = await self.chat_history.get_history(chatId)
+            thread = threading.Thread(target=asyncio.run, args=(ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, prompt=prompt, chat_history=chat_history, cancel_token=cancel_token, rule_context=rule_context, conversation_id=conversation_id), response_emitter, options={"system_prompt": f"You are an assistant that generates code for '{language}' language. You generate code between existing leading and trailing code sections.{existing_code_message} Be concise and return only code as a response. Don't include leading content or trailing content in your response, they are provided only for context. You can reuse methods and symbols defined in leading and trailing content."}),))
             thread.start()
         elif messageType == RequestDataType.InlineCompletionRequest:
             data = msg['data']
@@ -1646,6 +1811,165 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
         response_emitter.stream({"completions": completions})
         response_emitter.finish()
 
+
+class GetChatHistoryHandler(APIHandler):
+    @tornado.web.authenticated
+    async def get(self):
+        chat_id = self.get_argument("chatId", None)
+        if not chat_id:
+            self.set_status(400)
+            self.finish(json.dumps({"error": "chatId is required"}))
+            return
+        
+        history_mode = ai_service_manager.nbi_config.history_config.get("mode", "local")
+        messages = []
+        if history_mode == "mysql":
+            messages = await ai_service_manager.mysql_manager.get_messages_by_chat_id(chat_id)
+        global shared_chat_history
+        if shared_chat_history is None:
+            shared_chat_history = ChatHistory()
+        in_memory = await shared_chat_history.get_history(chat_id)
+        ws_history = []
+        if WebsocketCopilotHandler.chat_history_ref is not None:
+            ws_history = await WebsocketCopilotHandler.chat_history_ref.get_history(chat_id)
+        if len(ws_history) > len(in_memory):
+            in_memory = ws_history
+
+        # For local mode, only use in-memory data. For mysql mode prefer the
+        # more complete source for live sessions because DB writes are async.
+        if history_mode == "local" or (history_mode == "mysql" and len(in_memory) > len(messages)):
+            messages = []
+            for item in in_memory:
+                messages.append({
+                    "role": item.get("role", "assistant"),
+                    "content": item.get("content", ""),
+                    "reasoning_content": item.get("reasoning_content"),
+                    "tool_calls": item.get("tool_calls"),
+                    "tool_call_id": item.get("tool_call_id"),
+                    "created_at": dt.datetime.now(dt.timezone.utc),
+                })
+        if history_mode == "none":
+            messages = []
+        # Convert datetime to string for JSON serialization
+        for msg in messages:
+            if isinstance(msg.get('created_at'), dt.datetime):
+                msg['created_at'] = msg['created_at'].isoformat()
+            if msg.get('tool_calls'):
+                try:
+                    msg['tool_calls'] = json.loads(msg['tool_calls'])
+                except:
+                    pass
+        
+        self.finish(json.dumps({"messages": messages}))
+
+class GetRecentConversationsHandler(APIHandler):
+    @tornado.web.authenticated
+    async def get(self):
+        history_mode = ai_service_manager.nbi_config.history_config.get("mode", "local")
+        if history_mode == "none":
+            self.finish(json.dumps({"conversations": []}))
+            return
+
+        user_id = os.environ.get('JUPYTERHUB_USER')
+        if not user_id:
+            user = self.current_user
+            if user:
+                user_id = getattr(user, 'name', str(user))
+            else:
+                user_id = "unknown"
+
+        if history_mode == "local":
+            global shared_chat_history
+            if shared_chat_history is None:
+                shared_chat_history = ChatHistory()
+            # Keep ordering stable: most recently touched chat first. Local
+            # mode has in-memory transcripts only, so surface chat IDs with
+            # a synthetic timestamp for the sidebar conversation picker.
+            now = dt.datetime.now(dt.timezone.utc).isoformat()
+            conversation_ids = list(reversed(list(shared_chat_history.messages.keys())))
+            conversations = [
+                {
+                    "chat_id": chat_id,
+                    "chat_mode": "ask",
+                    "last_message_at": now,
+                }
+                for chat_id in conversation_ids
+            ]
+            self.finish(json.dumps({"conversations": conversations}))
+            return
+
+        conversations = await ai_service_manager.mysql_manager.get_recent_conversations(user_id)
+        for conv in conversations:
+            if isinstance(conv.get('last_message_at'), dt.datetime):
+                conv['last_message_at'] = conv['last_message_at'].isoformat()
+                
+        self.finish(json.dumps({"conversations": conversations}))
+
+class ChatHistory:
+    """
+    History of chat messages, key is chat id, value is list of messages
+    keep the last 10 messages in the same chat participant
+    """
+    DEFAULT_MAX_MESSAGES = 10
+
+    def __init__(self):
+        self.messages = {}
+
+    def clear(self, chatId = None):
+        if chatId is None:
+            self.messages = {}
+            return True
+        elif chatId in self.messages:
+            del self.messages[chatId]
+            return True
+
+        return False
+
+    def add_message(self, chatId, message):
+        history_mode = ai_service_manager.nbi_config.history_config.get("mode", "local")
+
+        if chatId not in self.messages:
+            self.messages[chatId] = []
+
+        # clear the chat history if participant changed
+        if message["role"] == "user":
+            existing_messages = self.messages[chatId]
+            prev_user_message = next((m for m in reversed(existing_messages) if m["role"] == "user"), None)
+            if prev_user_message is not None:
+                current_prompt_parts = AIServiceManager.parse_prompt(message["content"])
+                prev_prompt_parts = AIServiceManager.parse_prompt(prev_user_message["content"])
+                if current_prompt_parts.participant != prev_prompt_parts.participant:
+                    self.messages[chatId] = []
+
+        self.messages[chatId].append(message)
+        # limit number of messages kept in history only in local mode
+        if history_mode == "local":
+            max_messages = ai_service_manager.nbi_config.history_config.get(
+                "local_max_messages", ChatHistory.DEFAULT_MAX_MESSAGES
+            )
+            if len(self.messages[chatId]) > max_messages:
+                self.messages[chatId] = self.messages[chatId][-max_messages:]
+
+    async def get_history(self, chatId):
+        history_mode = ai_service_manager.nbi_config.history_config.get("mode", "local")
+        if chatId not in self.messages:
+            if history_mode == "mysql":
+                messages = await ai_service_manager.mysql_manager.get_messages_by_chat_id(chatId)
+                if messages:
+                    # Convert from DB format to chat history format
+                    self.messages[chatId] = [{"role": m["role"], "content": m["content"]} for m in messages]
+            else:
+                self.messages[chatId] = []
+
+        if history_mode == "local":
+            max_messages = ai_service_manager.nbi_config.history_config.get(
+                "local_max_messages", ChatHistory.DEFAULT_MAX_MESSAGES
+            )
+            if len(self.messages[chatId]) > max_messages:
+                self.messages[chatId] = self.messages[chatId][-max_messages:]
+        
+        return self.messages.get(chatId, [])
+        
 class NotebookIntelligence(ExtensionApp):
     name = "notebook_intelligence"
     default_url = "/notebook-intelligence"
@@ -1986,6 +2310,8 @@ class NotebookIntelligence(ExtensionApp):
         route_pattern_upload_file = url_path_join(base_url, "notebook-intelligence", "upload-file")
         route_pattern_claude_sessions = url_path_join(base_url, "notebook-intelligence", "claude-sessions")
         route_pattern_claude_sessions_resume = url_path_join(base_url, "notebook-intelligence", "claude-sessions", "resume")
+        route_pattern_history = url_path_join(base_url, "notebook-intelligence", "history")
+        route_pattern_conversations = url_path_join(base_url, "notebook-intelligence", "conversations")
         GetCapabilitiesHandler.disabled_tools = self.disabled_tools
         GetCapabilitiesHandler.allow_enabling_tools_with_env = self.allow_enabling_tools_with_env
         GetCapabilitiesHandler.disabled_providers = self.disabled_providers
@@ -2031,6 +2357,8 @@ class NotebookIntelligence(ExtensionApp):
             (route_pattern_upload_file, FileUploadHandler),
             (route_pattern_claude_sessions_resume, ClaudeSessionsResumeHandler),
             (route_pattern_claude_sessions, ClaudeSessionsListHandler),
+            (route_pattern_history, GetChatHistoryHandler),
+            (route_pattern_conversations, GetRecentConversationsHandler),
             (route_pattern_copilot, WebsocketCopilotHandler),
         ]
         web_app.add_handlers(host_pattern, NotebookIntelligence.handlers)

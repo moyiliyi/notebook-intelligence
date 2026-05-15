@@ -25,6 +25,46 @@ def sanitize_tools_for_openai_compatible(tools: list[dict] | None) -> list[dict]
     return sanitized_tools
 
 
+def sanitize_messages_for_openai_compatible(messages: list[dict] | None) -> list[dict]:
+    """Remove UI-only tool-call metadata before sending chat history to OpenAI SDKs.
+
+    History persistence stores extra assistant ``tool_calls`` entries such as
+    ``ui_tool_parameters`` and ``ui_message_parts`` for frontend replay. Those
+    shapes are not valid OpenAI chat-completions tool calls and cause SDK-side
+    validation errors if replayed into a later request.
+    """
+    if messages is None:
+        return []
+
+    sanitized_messages = copy.deepcopy(messages)
+    for message in sanitized_messages:
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            continue
+
+        valid_tool_calls = []
+        for tool_call in tool_calls:
+            if not isinstance(tool_call, dict):
+                continue
+
+            tool_call_type = tool_call.get("type")
+            if tool_call_type == "function":
+                function_payload = tool_call.get("function")
+                if tool_call.get("id") and isinstance(function_payload, dict):
+                    valid_tool_calls.append(tool_call)
+            elif tool_call_type == "custom":
+                custom_payload = tool_call.get("custom")
+                if tool_call.get("id") and custom_payload is not None:
+                    valid_tool_calls.append(tool_call)
+
+        if valid_tool_calls:
+            message["tool_calls"] = valid_tool_calls
+        else:
+            message.pop("tool_calls", None)
+
+    return sanitized_messages
+
+
 class OpenAICompatibleChatModel(ChatModel):
     def __init__(self, provider: "OpenAICompatibleLLMProvider"):
         super().__init__(provider)
@@ -54,6 +94,10 @@ class OpenAICompatibleChatModel(ChatModel):
         except:
             return DEFAULT_CONTEXT_WINDOW
 
+    @property
+    def supports_tools(self) -> bool:
+        return True
+
     def completions(self, messages: list[dict], tools: list[dict] = None, response: ChatResponse = None, cancel_token: CancelToken = None, options: dict = {}) -> Any:
         stream = response is not None
         model_id = self.get_property("model_id").value
@@ -62,10 +106,11 @@ class OpenAICompatibleChatModel(ChatModel):
         base_url = base_url if base_url.strip() != "" else None
         api_key = self.get_property("api_key").value
 
+        print(f'ASK:{messages}\nTOOL:{tools}\nTool_Choice:{options.get("tool_choice", None)}')
         client = OpenAI(base_url=base_url, api_key=api_key)
         resp = client.chat.completions.create(
             model=model_id,
-            messages=messages.copy(),
+            messages=sanitize_messages_for_openai_compatible(messages),
             tools=sanitize_tools_for_openai_compatible(tools) or omit,
             tool_choice=options.get("tool_choice", omit),
             stream=stream,
@@ -79,18 +124,26 @@ class OpenAICompatibleChatModel(ChatModel):
                 reasoning = getattr(delta, 'reasoning_content', None) or getattr(delta, 'reasoning', None)
                 if reasoning is not None:
                     reasoning = str(reasoning)
+                
+                tool_calls = None
+                if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                    tool_calls = [json.loads(tc.model_dump_json()) for tc in delta.tool_calls]
+
                 response.stream({
                         "choices": [{
                             "delta": {
                                 "role": delta.role,
                                 "content": delta.content,
-                                "reasoning_content": reasoning
+                                "reasoning_content": reasoning,
+                                "tool_calls": tool_calls
                             }
                         }]
                     })
+                print('AI MESSAGE:', delta)
             response.finish()
             return
         else:
+            print('AI MESSAGE:', resp)
             json_resp = json.loads(resp.model_dump_json())
             # Capture reasoning fields if they exist as extra attributes
             for i, choice in enumerate(resp.choices):

@@ -31,7 +31,8 @@ dependencies = [
     "ollama",
     "fastmcp>=2.11.2",
     "claude-agent-sdk",
-    "anthropic>=0.22.1"
+    "anthropic>=0.22.1",
+    "aiomysql"
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
 
