@@ -2698,9 +2698,20 @@ function SidebarComponent(props: any) {
           // through verbatim so the message displayed in chat matches what
           // was sent to the backend.
           message = request.content;
-          if (!request.chatMode) {
-            request.chatMode = chatMode;
-          }
+          // Notebook generation requires agent mode with the notebook-edit
+          // and notebook-execute toolsets — without them the LLM can't
+          // actually mutate cells regardless of how it answers. Override
+          // whatever the user has in the sidebar so the toolbar button
+          // works out-of-the-box in non-Claude modes too (issue #229).
+          request.chatMode = 'agent';
+          request.toolSelections = {
+            builtinToolsets: [
+              BuiltinToolsetType.NotebookEdit,
+              BuiltinToolsetType.NotebookExecute
+            ],
+            mcpServers: {},
+            extensions: {}
+          };
           break;
       }
       const messageId = UUID.uuid4();
