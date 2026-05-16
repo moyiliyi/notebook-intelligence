@@ -5,6 +5,7 @@ import json
 from os import path
 import os
 import sys
+import threading
 from typing import Dict, Optional
 import logging
 from notebook_intelligence import github_copilot
@@ -12,7 +13,7 @@ from notebook_intelligence.api import ButtonData, ChatModel, EmbeddingModel, Inl
 from notebook_intelligence.base_chat_participant import BaseChatParticipant
 from notebook_intelligence.config import NBIConfig
 from notebook_intelligence.github_copilot_chat_participant import GithubCopilotChatParticipant
-from notebook_intelligence.claude import CLAUDE_CODE_CHAT_PARTICIPANT_ID, ClaudeCodeChatParticipant, ClaudeCodeInlineCompletionModel, get_claude_models
+from notebook_intelligence.claude import CLAUDE_CODE_CHAT_PARTICIPANT_ID, ClaudeCodeChatParticipant, ClaudeCodeInlineCompletionModel, fetch_claude_models, get_claude_models
 from notebook_intelligence.llm_providers.github_copilot_llm_provider import GitHubCopilotLLMProvider
 from notebook_intelligence.llm_providers.litellm_compatible_llm_provider import LiteLLMCompatibleLLMProvider
 from notebook_intelligence.llm_providers.ollama_llm_provider import OllamaLLMProvider
@@ -183,6 +184,25 @@ class AIServiceManager(Host):
                 self._inline_completion_model = None
             elif model_cfg != 'inherit':
                 self._inline_completion_model = ClaudeCodeInlineCompletionModel(model_cfg, claude_settings.get('api_key', None), claude_settings.get('base_url', None))
+            # Populate the Claude model cache in the background so the
+            # settings panel's chat-model dropdown has options to render
+            # against the user's persisted ``claude_settings.chat_model``.
+            # Without this, the first /capabilities response after a JL
+            # restart returns an empty model list, the dropdown can only
+            # show "Default (recommended)", and the persisted value the
+            # user previously selected silently displays as Default
+            # (issue #235). The fetch is best-effort: failure (no api
+            # key, offline, rate limit) leaves the cache as-is and the
+            # user can still click "Refresh models" from the panel.
+            if not get_claude_models():
+                threading.Thread(
+                    target=fetch_claude_models,
+                    kwargs={
+                        "api_key": claude_settings.get('api_key', None),
+                        "base_url": claude_settings.get('base_url', None),
+                    },
+                    daemon=True,
+                ).start()
         else:
             self.unregister_chat_participant(self._claude_code_chat_participant)
 
