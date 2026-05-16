@@ -17,6 +17,7 @@ export { formatForMode, invertMode } from './terminal-drag-format';
 // real JupyterLab application context.
 interface ITerminalWidgetLike {
   paste(text: string): void;
+  activate?(): void;
 }
 
 interface IDisposedSignalLike {
@@ -32,6 +33,8 @@ interface IMainAreaWidgetLike {
   content: ITerminalWidgetLike;
   toolbar: ITerminalToolbarLike;
   disposed: IDisposedSignalLike;
+  isDisposed?: boolean;
+  activate?(): void;
 }
 
 interface ITerminalTrackerLike {
@@ -100,8 +103,18 @@ function setupTerminal(
     if (paths.length === 0) {
       return;
     }
+    // Async upload paths can finish after the terminal is closed; calling
+    // paste on a disposed Lumino Widget throws.
+    if (widget.isDisposed) {
+      return;
+    }
     const effectiveMode = invertMode(state.mode, shiftHeld);
     widget.content.paste(`${formatForMode(paths, effectiveMode)} `);
+    // Activate the outer MainAreaWidget so the terminal also gets raised
+    // if it's a background tab in a split. Otherwise the next keystroke
+    // goes to the file-browser (Enter would "open the selected file") or
+    // to whichever surface held focus before the drag.
+    widget.activate?.();
   };
 
   const handleDragEnter = (event: DragEvent) => {

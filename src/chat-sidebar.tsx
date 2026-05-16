@@ -1545,6 +1545,10 @@ function SidebarComponent(props: any) {
 
       if (newContextFiles.length > 0) {
         setSelectedContextFiles(prev => [...prev, ...newContextFiles]);
+        // Same reason as the lm-drop path: the gesture that initiated this
+        // (HTML5 drop, file dialog, image paste) often leaves focus outside
+        // the chat composer, so the next Enter goes somewhere unintended.
+        promptInputRef.current?.focus();
       }
     } finally {
       setIsUploadingFiles(false);
