@@ -1288,23 +1288,23 @@ function SettingsPanelComponentClaude(props: any) {
                   <select
                     className="jp-mod-styled"
                     disabled={settingLocks.claude_chat_model.locked}
+                    value={chatModel}
                     onChange={event => setChatModel(event.target.value)}
                   >
-                    <option
-                      value={ClaudeModelType.Default}
-                      selected={chatModel === ClaudeModelType.Default}
-                    >
+                    <option value={ClaudeModelType.Default}>
                       Default (recommended)
                     </option>
                     {claudeModels.map(model => (
-                      <option
-                        key={model.id}
-                        value={model.id}
-                        selected={chatModel === model.id}
-                      >
+                      <option key={model.id} value={model.id}>
                         {model.name}
                       </option>
                     ))}
+                    {chatModel !== ClaudeModelType.Default &&
+                      !claudeModels.some(m => m.id === chatModel) && (
+                        <option key={chatModel} value={chatModel}>
+                          {chatModel}
+                        </option>
+                      )}
                   </select>
                 </div>
               </div>
@@ -1320,41 +1320,38 @@ function SettingsPanelComponentClaude(props: any) {
                     disabled={
                       settingLocks.claude_inline_completion_model.locked
                     }
+                    value={inlineCompletionModel}
                     onChange={event =>
                       setInlineCompletionModel(event.target.value)
                     }
                   >
-                    <option
-                      value={ClaudeModelType.None}
-                      selected={inlineCompletionModel === ClaudeModelType.None}
-                    >
-                      None
-                    </option>
-                    <option
-                      value={ClaudeModelType.Inherit}
-                      selected={
-                        inlineCompletionModel === ClaudeModelType.Inherit
-                      }
-                    >
+                    <option value={ClaudeModelType.None}>None</option>
+                    <option value={ClaudeModelType.Inherit}>
                       Inherit from general settings
                     </option>
-                    <option
-                      value={ClaudeModelType.Default}
-                      selected={
-                        inlineCompletionModel === ClaudeModelType.Default
-                      }
-                    >
+                    <option value={ClaudeModelType.Default}>
                       Default (recommended)
                     </option>
                     {claudeModels.map(model => (
-                      <option
-                        key={model.id}
-                        value={model.id}
-                        selected={inlineCompletionModel === model.id}
-                      >
+                      <option key={model.id} value={model.id}>
                         {model.name}
                       </option>
                     ))}
+                    {![
+                      ClaudeModelType.None,
+                      ClaudeModelType.Inherit,
+                      ClaudeModelType.Default
+                    ].includes(inlineCompletionModel as ClaudeModelType) &&
+                      !claudeModels.some(
+                        m => m.id === inlineCompletionModel
+                      ) && (
+                        <option
+                          key={inlineCompletionModel}
+                          value={inlineCompletionModel}
+                        >
+                          {inlineCompletionModel}
+                        </option>
+                      )}
                   </select>
                 </div>
               </div>
