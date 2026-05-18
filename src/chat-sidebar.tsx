@@ -3799,10 +3799,18 @@ function SidebarComponent(props: any) {
                 );
               })}
               {isUploadingFiles && (
+                // The trailing-dots animation runs entirely in CSS
+                // (`.loading-ellipsis::after`), so the live region's DOM
+                // text stays the literal string "Uploading" and screen
+                // readers announce it exactly once on insertion — not on
+                // every dot tick. If a future change moves the dots into
+                // React state, restore the once-announce behavior with a
+                // separate sr-only label.
                 <div
                   className="user-input-context uploading-indicator"
                   role="status"
                   aria-live="polite"
+                  aria-atomic="true"
                   aria-busy="true"
                 >
                   <div className="loading-ellipsis">Uploading</div>
