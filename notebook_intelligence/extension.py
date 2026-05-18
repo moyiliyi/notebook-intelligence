@@ -49,6 +49,10 @@ from notebook_intelligence.mcp_config_validation import (
     MCPConfigValidationError,
     validate_mcp_config,
 )
+from notebook_intelligence.mcp_policy import (
+    reject_dangerous_env_keys,
+    validate_mcp_stdio_command,
+)
 from notebook_intelligence.claude import ClaudeCodeChatParticipant, fetch_claude_models
 from notebook_intelligence.claude_mcp_manager import ClaudeMCPManager
 from notebook_intelligence.plugin_manager import PluginManager
@@ -725,11 +729,32 @@ class MCPConfigFileHandler(APIHandler):
             self.finish(json.dumps({"status": "error", "message": str(exc)}))
             return
         try:
+            # Validate stdio entries against the same admin allowlist
+            # that the in-process loader uses, so a rejected entry
+            # cannot persist to disk and re-trigger the load-time warn
+            # on every restart. Apply the same env-key denylist that
+            # blocks PATH / LD_PRELOAD / etc. bypasses.
+            allowlist = ai_service_manager.get_mcp_stdio_command_allowlist()
+            servers = data.get("mcpServers") if isinstance(data, dict) else None
+            if isinstance(servers, dict):
+                for name, server in servers.items():
+                    if not isinstance(server, dict) or "command" not in server:
+                        continue
+                    validate_mcp_stdio_command(server.get("command", ""), allowlist)
+                    reject_dangerous_env_keys(server.get("env"))
             ai_service_manager.nbi_config.user_mcp = data
             ai_service_manager.nbi_config.save()
             ai_service_manager.nbi_config.load()
             ai_service_manager.update_mcp_servers()
             self.finish(json.dumps({"status": "ok"}))
+        except ValueError as exc:
+            # Policy rejection: surface as HTTP 400 so the Settings UI
+            # shows the operator's policy message instead of a generic
+            # 500. The body still uses the {status, message} envelope
+            # the frontend already parses.
+            self.set_status(400)
+            self.finish(json.dumps({"status": "error", "message": str(exc)}))
+            return
         except Exception as e:
             self.set_status(500)
             self.finish(json.dumps({"status": "error", "message": str(e)}))

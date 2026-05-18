@@ -102,8 +102,17 @@ def reject_dangerous_env_keys(env: Mapping[str, str] | None) -> None:
     if not env:
         return
     for key in env:
-        if isinstance(key, str) and key.upper() in DANGEROUS_MCP_ENV_KEYS:
+        if not isinstance(key, str):
+            continue
+        # Normalize before comparing: strip whitespace and uppercase, so
+        # smuggling via " PATH" / "path\t" is caught the same way as
+        # "PATH". POSIX env names are technically case-sensitive in
+        # execve, but the dynamic loader honors a few variants in
+        # surprising ways and a leading space is the simplest bypass
+        # of a case-only check.
+        normalized = key.strip().upper()
+        if normalized in DANGEROUS_MCP_ENV_KEYS:
             raise ValueError(
                 f"MCP env key {key!r} is not permitted; setting "
-                f"{key.upper()} would bypass the stdio command allowlist."
+                f"{normalized} would bypass the stdio command allowlist."
             )

@@ -106,6 +106,24 @@ class TestRejectDangerousEnvKeys:
         with pytest.raises(ValueError):
             reject_dangerous_env_keys({"path": "/tmp/evil"})
 
+    @pytest.mark.parametrize(
+        "key",
+        [
+            " PATH",         # leading space
+            "PATH ",         # trailing space
+            "PATH\t",        # trailing tab
+            "\tLD_PRELOAD",  # leading tab
+            " ld_preload",   # mixed: space + case
+        ],
+    )
+    def test_whitespace_normalization(self, key):
+        # An entry whose name has surrounding whitespace would otherwise
+        # bypass a strict case-only comparison. The denylist normalizes
+        # via strip+upper before comparing, so smuggling via " PATH" or
+        # "PATH\t" is rejected the same way as "PATH".
+        with pytest.raises(ValueError):
+            reject_dangerous_env_keys({key: "/tmp/evil"})
+
     def test_safe_env_keys_pass(self):
         reject_dangerous_env_keys({"API_TOKEN": "x", "REGION": "us-east-1"})
 

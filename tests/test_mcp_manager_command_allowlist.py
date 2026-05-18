@@ -136,3 +136,106 @@ class TestMCPManagerOptionPlumbing:
         ) as mock_impl:
             manager.create_mcp_server("npx-server", {"command": "npx"})
         assert mock_impl.called
+
+
+class TestMCPConfigFileHandlerPreValidation:
+    """The HTTP write path (``MCPConfigFileHandler.post``) used to log
+    and skip rejected entries at load time, but persist them to disk.
+    The handler now pre-validates against the same allowlist so a
+    rejected entry returns 400 and the user's mcp.json is unchanged.
+    """
+
+    def test_rejected_entry_returns_400_and_does_not_persist(
+        self, monkeypatch, tmp_path
+    ):
+        # Mock ai_service_manager so the test can drive the handler
+        # directly without standing up a real Jupyter Server. The mock
+        # surfaces an empty allowlist by default; the test installs a
+        # strict one to trigger the rejection path.
+        from notebook_intelligence import extension as ext_module
+
+        save_called = []
+
+        class FakeConfig:
+            def __init__(self):
+                self.user_mcp = None
+
+            def save(self):
+                save_called.append(True)
+
+            def load(self):
+                pass
+
+        class FakeASM:
+            def __init__(self):
+                self.nbi_config = FakeConfig()
+
+            def get_mcp_stdio_command_allowlist(self):
+                return ["^uv$", "^uvx$"]
+
+            def update_mcp_servers(self):
+                pass
+
+        monkeypatch.setattr(ext_module, "ai_service_manager", FakeASM())
+
+        # The handler's `post` is decorated with @authenticated, but we
+        # only need to exercise the validation branch. Call the inner
+        # function with a stand-in `self`.
+        from unittest.mock import MagicMock
+
+        handler = MagicMock(spec=ext_module.MCPConfigFileHandler)
+        handler.request = MagicMock()
+        handler.request.body = (
+            b'{"mcpServers": {"evil": {"command": "sh", "args": ["-c", "x"]}}}'
+        )
+        # Run the underlying post body (skip @authenticated wrapper).
+        ext_module.MCPConfigFileHandler.post.__wrapped__(handler)
+
+        # Validation rejection: 400, error message, no save.
+        handler.set_status.assert_called_with(400)
+        finish_arg = handler.finish.call_args[0][0]
+        assert '"error"' in finish_arg
+        assert "not in the admin allowlist" in finish_arg
+        assert save_called == []
+
+    def test_dangerous_env_key_returns_400(self, monkeypatch):
+        from notebook_intelligence import extension as ext_module
+
+        save_called = []
+
+        class FakeConfig:
+            def __init__(self):
+                self.user_mcp = None
+
+            def save(self):
+                save_called.append(True)
+
+            def load(self):
+                pass
+
+        class FakeASM:
+            def __init__(self):
+                self.nbi_config = FakeConfig()
+
+            def get_mcp_stdio_command_allowlist(self):
+                return []  # permissive command list
+
+            def update_mcp_servers(self):
+                pass
+
+        monkeypatch.setattr(ext_module, "ai_service_manager", FakeASM())
+
+        from unittest.mock import MagicMock
+
+        handler = MagicMock(spec=ext_module.MCPConfigFileHandler)
+        handler.request = MagicMock()
+        # Even with an empty allowlist, a PATH-poisoning env override
+        # is always rejected.
+        handler.request.body = (
+            b'{"mcpServers": {"x": {"command": "uv", '
+            b'"env": {"PATH": "/tmp/evil"}}}}'
+        )
+        ext_module.MCPConfigFileHandler.post.__wrapped__(handler)
+
+        handler.set_status.assert_called_with(400)
+        assert save_called == []
