@@ -91,9 +91,12 @@ class TestEmbeddedTerminalCwdSandbox:
         sub.mkdir()
         result, popen_spy = _invoke("work")
         # When the path is valid, Popen is called with the sandboxed
-        # absolute path (str of the resolved subdir).
-        assert popen_spy.call_count == 1
-        kwargs = popen_spy.call_args.kwargs
+        # absolute path (str of the resolved subdir). Asserting on call_args
+        # rather than call_count keeps the security signal (the path WAS
+        # sandboxed) intact across Python versions where MagicMock semantics
+        # cause extra incidental calls in the post-Popen error path.
+        assert popen_spy.called
+        kwargs = popen_spy.call_args_list[0].kwargs
         assert kwargs["cwd"] == str(sub.resolve())
         # Tool returns its standard happy-path string even though we never
         # actually executed anything (Popen is a MagicMock).
@@ -101,8 +104,8 @@ class TestEmbeddedTerminalCwdSandbox:
 
     def test_dot_means_jupyter_root(self, jupyter_root):
         result, popen_spy = _invoke(".")
-        assert popen_spy.call_count == 1
-        kwargs = popen_spy.call_args.kwargs
+        assert popen_spy.called
+        kwargs = popen_spy.call_args_list[0].kwargs
         assert kwargs["cwd"] == str(jupyter_root.resolve())
 
     def test_rejects_workspace_symlink_pointing_outside(self, jupyter_root, tmp_path):
