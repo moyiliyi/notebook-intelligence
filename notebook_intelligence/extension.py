@@ -53,7 +53,7 @@ from notebook_intelligence.claude_sessions import (
 )
 import notebook_intelligence.github_copilot as github_copilot
 from notebook_intelligence.built_in_toolsets import built_in_toolsets
-from notebook_intelligence.util import ThreadSafeWebSocketConnector, get_jupyter_root_dir, set_jupyter_root_dir, is_builtin_tool_enabled_in_env, is_provider_enabled_in_env, resolve_claude_cli_path, resolve_opencode_cli_path, resolve_pi_cli_path, resolve_copilot_cli_path, resolve_codex_cli_path
+from notebook_intelligence.util import ThreadSafeWebSocketConnector, get_jupyter_root_dir, set_jupyter_root_dir, is_builtin_tool_enabled_in_env, is_provider_enabled_in_env, VALID_CODING_AGENT_LAUNCHERS, compute_effective_disabled_launchers, validate_coding_agent_launcher_ids, resolve_claude_cli_path, resolve_opencode_cli_path, resolve_pi_cli_path, resolve_copilot_cli_path, resolve_codex_cli_path
 from notebook_intelligence.context_factory import RuleContextFactory
 from notebook_intelligence.skillset import SKILL_NAME_REGEX
 
@@ -399,6 +399,8 @@ class GetCapabilitiesHandler(APIHandler):
     allow_enabling_tools_with_env = False
     disabled_providers = []
     allow_enabling_providers_with_env = False
+    disabled_coding_agent_launchers = []
+    allow_enabling_coding_agent_launchers_with_env = False
     enable_chat_feedback = False
     additional_skipped_workspace_directories = []
     feature_policies = {}
@@ -418,6 +420,14 @@ class GetCapabilitiesHandler(APIHandler):
                 return True
             return provider_id not in self.disabled_providers or \
                    (self.allow_enabling_providers_with_env and is_provider_enabled_in_env(provider_id))
+        # Frontend gets the resolved set (denylist plus the per-pod re-enable
+        # env, gated by the explicit opt-in flag). Computed once per request
+        # in `util.compute_effective_disabled_launchers` so tests can pin the
+        # contract without re-implementing it.
+        effective_disabled_launchers = compute_effective_disabled_launchers(
+            self.disabled_coding_agent_launchers,
+            self.allow_enabling_coding_agent_launchers_with_env,
+        )
         allowed_builtin_toolsets = [{"id": toolset.id, "name": toolset.name, "description": toolset.description} for toolset in built_in_toolsets.values() if is_tool_enabled(toolset.id)]
         llm_providers = [p for p in ai_service_manager.llm_providers.values() if is_provider_enabled(p.id)]
         mcp_servers = ai_service_manager.get_mcp_servers()
@@ -491,6 +501,7 @@ class GetCapabilitiesHandler(APIHandler):
             "pi_cli_available": resolve_pi_cli_path() is not None,
             "github_copilot_cli_available": resolve_copilot_cli_path() is not None,
             "codex_cli_available": resolve_codex_cli_path() is not None,
+            "disabled_coding_agent_launchers": effective_disabled_launchers,
             "default_chat_mode": nbi_config.default_chat_mode,
             "chat_feedback_enabled": self.enable_chat_feedback,
             # Single source of truth lives on each domain's base handler so
@@ -1268,6 +1279,28 @@ class SkillsReconcileHandler(SkillsBaseHandler):
         self.finish(json.dumps(result.to_dict()))
 
 
+class SkillsReconcilerStopHandler(APIHandler):
+    """Incident-response kill switch for the managed-skills reconciler.
+
+    Not gated by ``SkillsBaseHandler.policy_enabled_attr`` because the
+    intended use is "stop the background loop regardless of current policy
+    state" — e.g. when a compromised manifest URL or leaked managed token
+    needs to be neutralized before the pod can be restarted.
+    """
+
+    @tornado.web.authenticated
+    async def post(self):
+        reconciler = ai_service_manager.get_skill_reconciler()
+        if reconciler is None:
+            # Already not running. Idempotent: don't 404 / 409 the caller
+            # since the desired end state matches.
+            self.finish(json.dumps({"stopped": True, "was_running": False}))
+            return
+        was_running = reconciler.is_running()
+        reconciler.stop()
+        self.finish(json.dumps({"stopped": True, "was_running": was_running}))
+
+
 class SkillRenameHandler(SkillsBaseHandler):
     @tornado.web.authenticated
     def post(self, scope, name):
@@ -1854,13 +1887,33 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
 
     def __init__(self, application, request, context_factory=None, **kwargs):
         super().__init__(application, request, **kwargs)
-        # TODO: cleanup
+        # Keyed by request messageId; entries are populated when a chat /
+        # inline-completion / generate-code request kicks off, and removed
+        # by `_run_request_thread` once the worker thread returns. The
+        # entry holds the response emitter (for ChatUserInput and
+        # RunUICommandResponse routing) and the cancel token. Without the
+        # removal step the dict grew unbounded for the lifetime of the
+        # websocket — every long chat session leaked one emitter +
+        # cancel token per turn.
         self._messageCallbackHandlers: dict[str, MessageCallbackHandlers] = {}
         self.chat_history = ChatHistory()
         self._context_factory = context_factory or RuleContextFactory()
         ws_connector = ThreadSafeWebSocketConnector(self)
         ai_service_manager.websocket_connector = ws_connector
         github_copilot.websocket_connector = ws_connector
+
+    def _run_request_thread(self, coro, message_id):
+        """Worker-thread entrypoint that pops the messageId from
+        `_messageCallbackHandlers` on completion (success or failure).
+        The dict entry is only needed while the request is in flight —
+        ChatUserInput / RunUICommandResponse / Cancel messages from the
+        client are routed to the emitter by messageId, and the client
+        stops sending those once the response stream ends.
+        """
+        try:
+            asyncio.run(coro)
+        finally:
+            self._messageCallbackHandlers.pop(message_id, None)
 
     def open(self):
         pass
@@ -2035,7 +2088,8 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
 
             # last prompt is added later
             request_chat_history = chat_history[chat_history_initial_size:-1] if is_claude_code_mode else chat_history[:-1]
-            thread = threading.Thread(target=asyncio.run, args=(ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, tool_selection=tool_selection, prompt=prompt, chat_history=request_chat_history, cancel_token=cancel_token, rule_context=rule_context), response_emitter),))
+            coro = ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, tool_selection=tool_selection, prompt=prompt, chat_history=request_chat_history, cancel_token=cancel_token, rule_context=rule_context), response_emitter)
+            thread = threading.Thread(target=self._run_request_thread, args=(coro, messageId))
             thread.start()
         elif messageType == RequestDataType.GenerateCode:
             data = msg['data']
@@ -2069,7 +2123,8 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
                 root_dir=NotebookIntelligence.root_dir
             )
             
-            thread = threading.Thread(target=asyncio.run, args=(ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, prompt=prompt, chat_history=self.chat_history.get_history(chatId), cancel_token=cancel_token, rule_context=rule_context), response_emitter, options={"system_prompt": f"You are an assistant that generates code for '{language}' language. You generate code between existing leading and trailing code sections.{existing_code_message} Be concise and return only code as a response. Don't include leading content or trailing content in your response, they are provided only for context. You can reuse methods and symbols defined in leading and trailing content."}),))
+            coro = ai_service_manager.handle_chat_request(ChatRequest(chat_mode=chat_mode, prompt=prompt, chat_history=self.chat_history.get_history(chatId), cancel_token=cancel_token, rule_context=rule_context), response_emitter, options={"system_prompt": f"You are an assistant that generates code for '{language}' language. You generate code between existing leading and trailing code sections.{existing_code_message} Be concise and return only code as a response. Don't include leading content or trailing content in your response, they are provided only for context. You can reuse methods and symbols defined in leading and trailing content."})
+            thread = threading.Thread(target=self._run_request_thread, args=(coro, messageId))
             thread.start()
         elif messageType == RequestDataType.InlineCompletionRequest:
             data = msg['data']
@@ -2084,7 +2139,8 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
             cancel_token = CancelTokenImpl()
             self._messageCallbackHandlers[messageId] = MessageCallbackHandlers(response_emitter, cancel_token)
 
-            thread = threading.Thread(target=asyncio.run, args=(WebsocketCopilotHandler.handle_inline_completions(prefix, suffix, language, filename, response_emitter, cancel_token),))
+            coro = WebsocketCopilotHandler.handle_inline_completions(prefix, suffix, language, filename, response_emitter, cancel_token)
+            thread = threading.Thread(target=self._run_request_thread, args=(coro, messageId))
             thread.start()
         elif messageType == RequestDataType.ChatUserInput:
             handlers = self._messageCallbackHandlers.get(messageId)
@@ -2110,7 +2166,12 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
             handlers.cancel_token.cancel_request()
  
     def on_close(self):
-        pass
+        # Drop any handler entries whose worker threads outlive the
+        # websocket connection. The thread wrapper would clean these up
+        # on its own once the coro returns, but a long-running request
+        # left in-flight at disconnect would otherwise pin its emitter
+        # and cancel token for the lifetime of the worker.
+        self._messageCallbackHandlers.clear()
 
     async def handle_inline_completions(prefix, suffix, language, filename, response_emitter, cancel_token):
         if ai_service_manager.inline_completion_model is None:
@@ -2171,6 +2232,29 @@ class NotebookIntelligence(ExtensionApp):
         List of built-in tools to disable. Valid tool names: nbi-notebook-edit, nbi-notebook-execute, nbi-python-file-edit, nbi-file-edit, nbi-file-read, nbi-command-execute.
 
         Example: ['nbi-python-file-edit', 'nbi-command-execute']
+        """,
+        allow_none=True,
+        config=True,
+    )
+
+    disabled_coding_agent_launchers = List(
+        trait=Unicode(),
+        default_value=None,
+        help=f"""
+        List of coding-agent launcher tiles to hide even when the
+        corresponding CLI is on PATH. Valid IDs: {', '.join(VALID_CODING_AGENT_LAUNCHERS)}.
+
+        Example: ['opencode', 'pi']
+        """,
+        allow_none=True,
+        config=True,
+    )
+
+    allow_enabling_coding_agent_launchers_with_env = Bool(
+        default_value=False,
+        help="""
+        Allow re-enabling disabled coding-agent launcher tiles per pod via
+        the NBI_ENABLED_CODING_AGENT_LAUNCHERS environment variable.
         """,
         allow_none=True,
         config=True,
@@ -2586,6 +2670,9 @@ class NotebookIntelligence(ExtensionApp):
         route_pattern_skills_import_preview = url_path_join(base_url, "notebook-intelligence", "skills", "import", "preview")
         route_pattern_skills_import = url_path_join(base_url, "notebook-intelligence", "skills", "import")
         route_pattern_skills_reconcile = url_path_join(base_url, "notebook-intelligence", "skills", "reconcile")
+        route_pattern_skills_reconciler_stop = url_path_join(
+            base_url, "notebook-intelligence", "skills", "reconciler", "stop"
+        )
         route_pattern_skill_detail = url_path_join(base_url, "notebook-intelligence", "skills", r"(user|project)", skill_name)
         route_pattern_skill_rename = url_path_join(base_url, "notebook-intelligence", "skills", r"(user|project)", skill_name, "rename")
         route_pattern_skill_bundle_file = url_path_join(base_url, "notebook-intelligence", "skills", r"(user|project)", skill_name, "files")
@@ -2619,6 +2706,15 @@ class NotebookIntelligence(ExtensionApp):
         GetCapabilitiesHandler.allow_enabling_tools_with_env = self.allow_enabling_tools_with_env
         GetCapabilitiesHandler.disabled_providers = self.disabled_providers
         GetCapabilitiesHandler.allow_enabling_providers_with_env = self.allow_enabling_providers_with_env
+        # Validate at startup so a typo fails loudly rather than silently
+        # no-opping at request time. Empty / None passes through.
+        validate_coding_agent_launcher_ids(self.disabled_coding_agent_launchers)
+        GetCapabilitiesHandler.disabled_coding_agent_launchers = (
+            self.disabled_coding_agent_launchers or []
+        )
+        GetCapabilitiesHandler.allow_enabling_coding_agent_launchers_with_env = (
+            self.allow_enabling_coding_agent_launchers_with_env
+        )
         GetCapabilitiesHandler.enable_chat_feedback = self.enable_chat_feedback
         SkillsBaseHandler.allow_github_skill_import = _resolve_bool_with_env(
             "NBI_ALLOW_GITHUB_SKILL_IMPORT", self.allow_github_skill_import
@@ -2692,6 +2788,10 @@ class NotebookIntelligence(ExtensionApp):
             (route_pattern_skills_import_preview, SkillsImportPreviewHandler),
             (route_pattern_skills_import, SkillsImportHandler),
             (route_pattern_skills_reconcile, SkillsReconcileHandler),
+            # Deliberately not gated by SkillsBaseHandler — the kill switch
+            # must remain reachable while skills_management_policy=force-off
+            # is the active state. See the handler docstring.
+            (route_pattern_skills_reconciler_stop, SkillsReconcilerStopHandler),
             (route_pattern_skill_bundle_file_rename, SkillBundleFileRenameHandler),
             (route_pattern_skill_bundle_file, SkillBundleFileHandler),
             (route_pattern_skill_rename, SkillRenameHandler),
