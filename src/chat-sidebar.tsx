@@ -3769,17 +3769,20 @@ function SidebarComponent(props: any) {
           button, and feedback button before reaching the prompt; this
           shortcut lands them straight on the textarea. The link is
           revealed only when focused (the .nbi-skip-link CSS) so it
-          stays out of the sighted-user's way. */}
-      <a
-        href="#sidebar-user-input"
-        className="nbi-skip-link"
-        onClick={event => {
-          event.preventDefault();
-          promptInputRef.current?.focus();
-        }}
-      >
-        Skip to message input
-      </a>
+          stays out of the sighted-user's way. Rendered only when
+          chatEnabled is true so the target textarea exists. */}
+      {chatEnabled && (
+        <a
+          href="#sidebar-user-input"
+          className="nbi-skip-link"
+          onClick={event => {
+            event.preventDefault();
+            promptInputRef.current?.focus();
+          }}
+        >
+          Skip to message input
+        </a>
+      )}
       {isDragOver && (
         <div className="drop-zone-overlay">
           <span>Drop files to attach as context</span>
