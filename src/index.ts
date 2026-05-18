@@ -987,30 +987,20 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
     // Ctrl/Cmd+Shift+L mirrors common "focus search / focus input"
     // bindings used by other editors and doesn't collide with any
     // built-in JupyterLab shortcut.
+    //
+    // Implementation: dispatch a CustomEvent the React sidebar listens
+    // for. The sidebar owns `promptInputRef` and can focus the
+    // textarea reliably regardless of whether the panel was collapsed
+    // (the event fires after the React tree has been mounted by the
+    // activate path), so we don't have to race the Lumino layout with
+    // a DOM-id `querySelector`. Matches the existing
+    // `copilotSidebar:*` event pattern used elsewhere in this file.
     app.commands.addCommand(CommandIDs.focusChatInput, {
       label: 'Focus Notebook Intelligence chat input',
       caption: 'Open the NBI sidebar and move focus to the prompt textarea',
       execute: () => {
         app.shell.activateById(panel.id);
-        // After activateById commits, the React tree's textarea is in
-        // the DOM. A frame boundary gives Lumino time to settle the
-        // visibility flip; querying earlier can race the layout and
-        // focus() can no-op on an offscreen node.
-        const focusPromptInput = () => {
-          const textarea = document.querySelector<HTMLTextAreaElement>(
-            '#sidebar-user-input textarea'
-          );
-          if (textarea) {
-            textarea.focus();
-            return true;
-          }
-          return false;
-        };
-        if (!focusPromptInput()) {
-          requestAnimationFrame(() => {
-            focusPromptInput();
-          });
-        }
+        document.dispatchEvent(new CustomEvent('copilotSidebar:focusPrompt'));
       }
     });
     app.commands.addKeyBinding({
