@@ -1127,6 +1127,16 @@ function SidebarComponent(props: any) {
   const autocompleteRef = useRef<HTMLDivElement>(null);
   const sidebarRootRef = useRef<HTMLDivElement>(null);
   const atButtonRef = useRef<HTMLButtonElement>(null);
+  // Refs on the popover wrappers so we can move focus into the dialog
+  // when it opens (replaces the broken autoFocus={true} pattern, which
+  // only works on form controls). Paired with focus-restore refs that
+  // remember which element triggered the open so we can put focus back
+  // on close, regardless of which exit path the user took.
+  const workspaceFilePopoverRef = useRef<HTMLDivElement>(null);
+  const modeToolsPopoverRef = useRef<HTMLDivElement>(null);
+  const workspaceFilePickerOpenerRef = useRef<HTMLElement | null>(null);
+  const modeToolsOpenerRef = useRef<HTMLElement | null>(null);
+  const slashPopoverOpenerRef = useRef<HTMLElement | null>(null);
   const [promptHistory, setPromptHistory] = useState<string[]>([]);
   // position on prompt history stack
   const [promptHistoryIndex, setPromptHistoryIndex] = useState(0);
@@ -1400,6 +1410,59 @@ function SidebarComponent(props: any) {
   useEffect(() => {
     showWorkspaceFilePickerRef.current = showWorkspaceFilePicker;
   }, [showWorkspaceFilePicker]);
+
+  // Focus management for the workspace file picker: move focus into the
+  // popover on open so keyboard users land inside it, then restore focus
+  // to the trigger on close. Restoration runs on the close transition
+  // regardless of which exit path (close button, Escape, outside click)
+  // dismissed the popover.
+  const prevWorkspaceFilePickerRef = useRef(false);
+  useEffect(() => {
+    if (showWorkspaceFilePicker && !prevWorkspaceFilePickerRef.current) {
+      workspaceFilePopoverRef.current?.focus();
+    } else if (!showWorkspaceFilePicker && prevWorkspaceFilePickerRef.current) {
+      const opener = workspaceFilePickerOpenerRef.current;
+      workspaceFilePickerOpenerRef.current = null;
+      if (opener && document.contains(opener)) {
+        opener.focus();
+      }
+    }
+    prevWorkspaceFilePickerRef.current = showWorkspaceFilePicker;
+  }, [showWorkspaceFilePicker]);
+
+  // Same pattern for the mode-tools popover.
+  const prevModeToolsRef = useRef(false);
+  useEffect(() => {
+    if (showModeTools && !prevModeToolsRef.current) {
+      modeToolsPopoverRef.current?.focus();
+    } else if (!showModeTools && prevModeToolsRef.current) {
+      const opener = modeToolsOpenerRef.current;
+      modeToolsOpenerRef.current = null;
+      if (opener && document.contains(opener)) {
+        opener.focus();
+      }
+    }
+    prevModeToolsRef.current = showModeTools;
+  }, [showModeTools]);
+
+  // Slash-popover restoration: only the close transition matters; the
+  // popover lives next to the textarea and the textarea retains focus
+  // while it's open, so there's nothing to focus *into* on open.
+  const prevShowPopoverRef = useRef(false);
+  useEffect(() => {
+    if (!showPopover && prevShowPopoverRef.current) {
+      const opener = slashPopoverOpenerRef.current;
+      slashPopoverOpenerRef.current = null;
+      // The slash popover always lives alongside the prompt textarea;
+      // bias toward returning focus there if the recorded opener is gone.
+      if (opener && document.contains(opener)) {
+        opener.focus();
+      } else if (promptInputRef.current) {
+        promptInputRef.current.focus();
+      }
+    }
+    prevShowPopoverRef.current = showPopover;
+  }, [showPopover]);
   // Set when a refresh arrives mid-scan. The in-flight scan's drain loop
   // honors one more pass at completion, bounding the storm to "at most one
   // scan running + one queued" instead of cascading cancellations.
@@ -1470,6 +1533,12 @@ function SidebarComponent(props: any) {
     setShowPopover(false);
     setShowModeTools(false);
     const nextState = !showWorkspaceFilePicker;
+    // Capture the trigger element before re-render so we can restore
+    // focus to it when the popover closes (D030).
+    if (nextState) {
+      workspaceFilePickerOpenerRef.current =
+        (document.activeElement as HTMLElement | null) ?? null;
+    }
     setShowWorkspaceFilePicker(nextState);
     // Sync the ref synchronously so a debounced refresh that fires during
     // the awaited scan below honors the now-open picker state immediately,
@@ -2464,6 +2533,10 @@ function SidebarComponent(props: any) {
     setPrompt(newPrompt);
     const trimmedPrompt = newPrompt.trimStart();
     if (trimmedPrompt === '@' || trimmedPrompt === '/') {
+      // D030: remember which element opened the popover so focus returns
+      // there on close. For the typing path that's the textarea itself.
+      slashPopoverOpenerRef.current =
+        (document.activeElement as HTMLElement | null) ?? null;
       setShowPopover(true);
       filterPrefixSuggestions(trimmedPrompt);
     } else if (trimmedPrompt.startsWith('@') || trimmedPrompt.startsWith('/')) {
@@ -2539,6 +2612,9 @@ function SidebarComponent(props: any) {
   const handleChatToolsButtonClick = async () => {
     setShowWorkspaceFilePicker(false);
     if (!showModeTools) {
+      // D030: remember the trigger so focus returns there on close.
+      modeToolsOpenerRef.current =
+        (document.activeElement as HTMLElement | null) ?? null;
       NBIAPI.fetchCapabilities().then(() => {
         toolConfigRef.current = NBIAPI.config.toolConfig;
         mcpServerSettingsRef.current = NBIAPI.config.mcpServerSettings;
@@ -3812,7 +3888,16 @@ function SidebarComponent(props: any) {
                 ref={atButtonRef}
                 className="user-input-footer-button user-input-footer-slash-button"
                 onClick={() => {
-                  setShowPopover(prev => !prev);
+                  setShowPopover(prev => {
+                    if (!prev) {
+                      // D030: remember the button so focus returns to it
+                      // on close. Capture before the state flip so we
+                      // record the click target, not whatever the focus
+                      // shift below leaves behind.
+                      slashPopoverOpenerRef.current = atButtonRef.current;
+                    }
+                    return !prev;
+                  });
                   promptInputRef.current?.focus();
                 }}
                 title="Slash commands"
@@ -3924,9 +4009,9 @@ function SidebarComponent(props: any) {
           )}
           {showWorkspaceFilePicker && (
             <div
+              ref={workspaceFilePopoverRef}
               className="workspace-file-popover"
-              tabIndex={1}
-              autoFocus={true}
+              tabIndex={-1}
               onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                 if (event.key === 'Escape') {
                   event.stopPropagation();
@@ -3943,49 +4028,33 @@ function SidebarComponent(props: any) {
                   Add files as context
                 </div>
                 <div style={{ flexGrow: 1 }}></div>
-                <div
+                <button
+                  type="button"
                   className={
                     'mode-tools-popover-button mode-tools-popover-refresh-button' +
                     (workspaceFilesLoading ? ' is-loading' : '')
                   }
                   title="Refresh file list"
-                  role="button"
-                  tabIndex={0}
                   aria-label="Refresh workspace file list"
                   aria-busy={workspaceFilesLoading}
+                  disabled={workspaceFilesLoading}
                   onClick={() => {
                     if (!workspaceFilesLoading) {
                       refreshWorkspaceFiles();
                     }
                   }}
-                  onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-                    if (
-                      (event.key === 'Enter' || event.key === ' ') &&
-                      !workspaceFilesLoading
-                    ) {
-                      event.preventDefault();
-                      refreshWorkspaceFiles();
-                    }
-                  }}
                 >
                   <VscRefresh />
-                </div>
-                <div
+                </button>
+                <button
+                  type="button"
                   className="mode-tools-popover-button mode-tools-popover-close-button"
                   title="Close"
-                  role="button"
-                  tabIndex={0}
                   aria-label="Close file picker"
                   onClick={() => setShowWorkspaceFilePicker(false)}
-                  onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setShowWorkspaceFilePicker(false);
-                    }
-                  }}
                 >
                   <VscClose />
-                </div>
+                </button>
               </div>
               <div className="workspace-file-popover-body">
                 <input
@@ -4049,9 +4118,9 @@ function SidebarComponent(props: any) {
           )}
           {showModeTools && (
             <div
+              ref={modeToolsPopoverRef}
               className="mode-tools-popover"
-              tabIndex={1}
-              autoFocus={true}
+              tabIndex={-1}
               onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                 if (event.key === 'Escape' || event.key === 'Enter') {
                   event.stopPropagation();
@@ -4077,27 +4146,26 @@ function SidebarComponent(props: any) {
                     <VscTrash />
                   </div>
                   <div>
-                    <a
-                      href="javascript:void(0);"
+                    <button
+                      type="button"
+                      className="link-button"
                       onClick={onClearToolsButtonClicked}
                     >
                       clear
-                    </a>
+                    </button>
                   </div>
                 </div>
-                <div
+                <button
+                  type="button"
                   className="mode-tools-popover-button mode-tools-popover-done-button"
+                  aria-label="Close tools picker"
                   onClick={() => setShowModeTools(false)}
                 >
-                  {/* <button
-                    className="jp-Dialog-button jp-mod-accept jp-mod-styled send-button"
-                  > */}
                   <div>
                     <VscPassFilled />
                   </div>
-                  {/* </button> */}
                   <div>Done</div>
-                </div>
+                </button>
               </div>
               <div className="mode-tools-popover-tool-list">
                 <div className="mode-tools-group-header">Built-in</div>
