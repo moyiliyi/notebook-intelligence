@@ -1411,34 +1411,61 @@ function SidebarComponent(props: any) {
     showWorkspaceFilePickerRef.current = showWorkspaceFilePicker;
   }, [showWorkspaceFilePicker]);
 
-  // Focus management for the workspace file picker: move focus into the
-  // popover on open so keyboard users land inside it, then restore focus
-  // to the trigger on close. Restoration runs on the close transition
+  // Focus management for the popovers: move focus into the popover on
+  // open so keyboard users land inside it, then restore focus to the
+  // trigger on close. Restoration runs on the close transition
   // regardless of which exit path (close button, Escape, outside click)
   // dismissed the popover.
+  //
+  // Restoration is guarded by:
+  //   (a) `document.contains(opener)` so a trigger that was unmounted
+  //       between open and close (e.g., chat-mode flipped) doesn't
+  //       throw; and
+  //   (b) "the user hasn't moved focus elsewhere intentionally" — we
+  //       only steal focus back when the activeElement is still inside
+  //       the popover that's closing (i.e., the close came from the
+  //       popover itself, not from the user clicking a sibling control).
+  //       Without this guard, dismissing one popover by clicking the
+  //       trigger of another would yank focus to the first popover's
+  //       trigger right after the second popover focused itself.
   const prevWorkspaceFilePickerRef = useRef(false);
   useEffect(() => {
     if (showWorkspaceFilePicker && !prevWorkspaceFilePickerRef.current) {
       workspaceFilePopoverRef.current?.focus();
     } else if (!showWorkspaceFilePicker && prevWorkspaceFilePickerRef.current) {
       const opener = workspaceFilePickerOpenerRef.current;
+      const popover = workspaceFilePopoverRef.current;
       workspaceFilePickerOpenerRef.current = null;
-      if (opener && document.contains(opener)) {
+      const active = document.activeElement as HTMLElement | null;
+      const focusInsidePopover = popover ? popover.contains(active) : false;
+      const focusOnBody = active === document.body || active === null;
+      if (
+        (focusInsidePopover || focusOnBody) &&
+        opener &&
+        document.contains(opener)
+      ) {
         opener.focus();
       }
     }
     prevWorkspaceFilePickerRef.current = showWorkspaceFilePicker;
   }, [showWorkspaceFilePicker]);
 
-  // Same pattern for the mode-tools popover.
   const prevModeToolsRef = useRef(false);
   useEffect(() => {
     if (showModeTools && !prevModeToolsRef.current) {
       modeToolsPopoverRef.current?.focus();
     } else if (!showModeTools && prevModeToolsRef.current) {
       const opener = modeToolsOpenerRef.current;
+      const popover = modeToolsPopoverRef.current;
       modeToolsOpenerRef.current = null;
-      if (opener && document.contains(opener)) {
+      const active = document.activeElement as HTMLElement | null;
+      const focusInsidePopover = popover ? popover.contains(active) : false;
+      const focusOnBody = active === document.body || active === null;
+      if (
+        (focusInsidePopover || focusOnBody) &&
+        opener &&
+        document.contains(opener)
+      ) {
         opener.focus();
       }
     }
@@ -1452,13 +1479,23 @@ function SidebarComponent(props: any) {
   useEffect(() => {
     if (!showPopover && prevShowPopoverRef.current) {
       const opener = slashPopoverOpenerRef.current;
+      const popover = autocompleteRef.current;
       slashPopoverOpenerRef.current = null;
-      // The slash popover always lives alongside the prompt textarea;
-      // bias toward returning focus there if the recorded opener is gone.
-      if (opener && document.contains(opener)) {
+      const active = document.activeElement as HTMLElement | null;
+      const focusInsidePopover = popover ? popover.contains(active) : false;
+      // The textarea always stays focusable next to the popover and the
+      // user may have been typing inside it the whole time, so leave
+      // focus alone if it's on the textarea. Same "user moved focus
+      // elsewhere intentionally" guard as the other popovers.
+      const focusOnTextarea = active === promptInputRef.current;
+      const focusOnBody = active === document.body || active === null;
+      if (
+        (focusInsidePopover || focusOnBody) &&
+        !focusOnTextarea &&
+        opener &&
+        document.contains(opener)
+      ) {
         opener.focus();
-      } else if (promptInputRef.current) {
-        promptInputRef.current.focus();
       }
     }
     prevShowPopoverRef.current = showPopover;
@@ -3888,16 +3925,15 @@ function SidebarComponent(props: any) {
                 ref={atButtonRef}
                 className="user-input-footer-button user-input-footer-slash-button"
                 onClick={() => {
-                  setShowPopover(prev => {
-                    if (!prev) {
-                      // D030: remember the button so focus returns to it
-                      // on close. Capture before the state flip so we
-                      // record the click target, not whatever the focus
-                      // shift below leaves behind.
-                      slashPopoverOpenerRef.current = atButtonRef.current;
-                    }
-                    return !prev;
-                  });
+                  if (!showPopover) {
+                    // D030: remember the button so focus returns to it
+                    // on close. Capture before the state flip so we
+                    // record the click target, not whatever the focus
+                    // shift below leaves behind. (Pure: side effects
+                    // belong outside the state updater.)
+                    slashPopoverOpenerRef.current = atButtonRef.current;
+                  }
+                  setShowPopover(prev => !prev);
                   promptInputRef.current?.focus();
                 }}
                 title="Slash commands"
@@ -4012,6 +4048,8 @@ function SidebarComponent(props: any) {
               ref={workspaceFilePopoverRef}
               className="workspace-file-popover"
               tabIndex={-1}
+              role="dialog"
+              aria-labelledby="nbi-workspace-popover-title"
               onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                 if (event.key === 'Escape') {
                   event.stopPropagation();
@@ -4024,7 +4062,10 @@ function SidebarComponent(props: any) {
                 <div className="mode-tools-popover-header-icon">
                   <VscAdd />
                 </div>
-                <div className="mode-tools-popover-title">
+                <div
+                  className="mode-tools-popover-title"
+                  id="nbi-workspace-popover-title"
+                >
                   Add files as context
                 </div>
                 <div style={{ flexGrow: 1 }}></div>
@@ -4037,7 +4078,7 @@ function SidebarComponent(props: any) {
                   title="Refresh file list"
                   aria-label="Refresh workspace file list"
                   aria-busy={workspaceFilesLoading}
-                  disabled={workspaceFilesLoading}
+                  aria-disabled={workspaceFilesLoading}
                   onClick={() => {
                     if (!workspaceFilesLoading) {
                       refreshWorkspaceFiles();
@@ -4121,6 +4162,8 @@ function SidebarComponent(props: any) {
               ref={modeToolsPopoverRef}
               className="mode-tools-popover"
               tabIndex={-1}
+              role="dialog"
+              aria-labelledby="nbi-mode-tools-popover-title"
               onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                 if (event.key === 'Escape' || event.key === 'Enter') {
                   event.stopPropagation();
@@ -4133,7 +4176,10 @@ function SidebarComponent(props: any) {
                 <div className="mode-tools-popover-header-icon">
                   <VscTools />
                 </div>
-                <div className="mode-tools-popover-title">
+                <div
+                  className="mode-tools-popover-title"
+                  id="nbi-mode-tools-popover-title"
+                >
                   {toolSelectionTitle}
                 </div>
                 <div
