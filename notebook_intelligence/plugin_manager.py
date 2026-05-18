@@ -13,6 +13,7 @@ NBI shells out for both reads and writes:
   - `claude plugin disable <plugin> [-s scope]`
   - `claude plugin marketplace add <source> [--scope <scope>]`
   - `claude plugin marketplace remove <name>`
+  - `claude plugin marketplace update [<name>]`
 
 The CLI's JSON-output schema is not formally documented; the manager
 forwards parsed objects to the frontend mostly untouched so newer Claude
@@ -165,12 +166,51 @@ class PluginManager:
 
     async def list_marketplaces(self) -> list[dict[str, Any]]:
         out = await self._run_cli(["plugin", "marketplace", "list", "--json"])
-        return self._parse_json_array(out, "plugin marketplace list")
+        marketplaces = self._parse_json_array(out, "plugin marketplace list")
+        # Enrich each entry with description, version, and plugin list
+        # pulled from the cached marketplace.json. Older clients ignore
+        # the extra keys; the panel uses them to render a richer row. A
+        # missing or malformed manifest logs and skips so one bad entry
+        # cannot break the whole list endpoint. OSError covers
+        # FileNotFoundError, PermissionError, IsADirectoryError; the
+        # ValueError branch covers our own JSON-shape complaints and the
+        # raw UnicodeDecodeError that read_text can raise.
+        for entry in marketplaces:
+            name = entry.get("name")
+            if not isinstance(name, str):
+                continue
+            try:
+                details = self._read_marketplace_details(name)
+            except (OSError, ValueError, UnicodeDecodeError):
+                continue
+            for key, value in details.items():
+                # Prefer a future CLI value when present AND truthy: an
+                # empty-string description from the CLI must not shadow
+                # a useful description from the manifest.
+                if not entry.get(key):
+                    entry[key] = value
+        return marketplaces
 
     async def list_marketplace_plugins(
         self, marketplace: str
     ) -> list[dict[str, Any]]:
         marketplace_name = _validate_marketplace_name(marketplace)
+        doc = self._read_marketplace_manifest(marketplace_name)
+        plugins = doc.get("plugins")
+        if not isinstance(plugins, list):
+            return []
+        return [p for p in plugins if isinstance(p, dict)]
+
+    # Upper bound on marketplace.json size. The realistic shape is a few
+    # KB even for big marketplaces, so a 1 MiB cap covers every legitimate
+    # use while bounding the memory cost of a hostile or corrupt manifest
+    # the next list_marketplaces call would otherwise slurp whole.
+    _MARKETPLACE_MANIFEST_MAX_BYTES: int = 1 * 1024 * 1024
+
+    def _read_marketplace_manifest(self, marketplace_name: str) -> dict[str, Any]:
+        """Read the cached marketplace.json. Raises FileNotFoundError /
+        ValueError on missing or malformed input.
+        """
         manifest = (
             _claude_plugins_root()
             / "marketplaces"
@@ -179,14 +219,64 @@ class PluginManager:
             / "marketplace.json"
         )
         try:
-            out = manifest.read_text(encoding="utf-8")
+            size = manifest.stat().st_size
         except FileNotFoundError as exc:
             raise FileNotFoundError(
                 f"Marketplace manifest not found for {marketplace_name!r}"
             ) from exc
-        return self._parse_json_array(
-            out, f"plugin marketplace {marketplace_name} manifest"
-        )
+        if size > self._MARKETPLACE_MANIFEST_MAX_BYTES:
+            raise ValueError(
+                f"marketplace.json for {marketplace_name!r} exceeds the "
+                f"{self._MARKETPLACE_MANIFEST_MAX_BYTES}-byte cap "
+                f"({size} bytes)"
+            )
+        try:
+            text = manifest.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Marketplace manifest not found for {marketplace_name!r}"
+            ) from exc
+        try:
+            doc = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"Could not parse marketplace.json for {marketplace_name!r}: {exc}"
+            ) from exc
+        if not isinstance(doc, dict):
+            raise ValueError(
+                f"marketplace.json for {marketplace_name!r} is not a JSON object"
+            )
+        return doc
+
+    def _read_marketplace_details(self, marketplace_name: str) -> dict[str, Any]:
+        """Return ``description``, ``version``, ``plugin_count``, and
+        ``plugin_names`` for the named marketplace.
+
+        Reads the cached ``.claude-plugin/marketplace.json`` written by
+        ``claude plugin marketplace add``. Both top-level and
+        ``metadata.*`` fields are recognized: the documented schema puts
+        ``description``/``version`` at top level but the same keys are
+        accepted under ``metadata`` for backward compatibility, per the
+        Claude Code marketplace docs.
+        """
+        doc = self._read_marketplace_manifest(marketplace_name)
+        metadata = doc.get("metadata") if isinstance(doc.get("metadata"), dict) else {}
+        description = doc.get("description") or metadata.get("description") or ""
+        version = doc.get("version") or metadata.get("version") or ""
+        plugins_raw = doc.get("plugins")
+        plugin_names: list[str] = []
+        if isinstance(plugins_raw, list):
+            for plugin in plugins_raw:
+                if isinstance(plugin, dict):
+                    name = plugin.get("name")
+                    if isinstance(name, str) and name:
+                        plugin_names.append(name)
+        return {
+            "description": str(description) if description else "",
+            "version": str(version) if version else "",
+            "plugin_count": len(plugin_names),
+            "plugin_names": plugin_names,
+        }
 
     # --- writes (CLI shell-outs) ---------------------------------------
 
@@ -288,6 +378,35 @@ class PluginManager:
         reject_flag_smuggling("name", name)
         async with self._write_lock:
             await self._run_cli(["plugin", "marketplace", "remove", name])
+
+    async def update_marketplace(self, *, name: str) -> None:
+        """Run ``claude plugin marketplace update <name>``.
+
+        Refreshes the local cache of the marketplace manifest from its
+        source (git pull, HTTPS refetch, local-path recopy). The CLI
+        does not return JSON for this command; success is signaled by
+        exit code zero. Times out under the same network budget as
+        ``add_marketplace`` because the underlying ``git`` call has the
+        same potential to stall.
+        """
+        marketplace_name = _validate_marketplace_name(name)
+        # Marketplace `update` re-fetches from the original source; if it
+        # was a GitHub URL the same auth chain that worked for `add`
+        # needs to apply here too. The CLI persists the source from the
+        # initial add, so we cannot inspect it without re-reading the
+        # cached config, but injecting the token unconditionally is
+        # harmless for non-GitHub sources (the CLI just ignores it) and
+        # the env never lands in argv.
+        token = resolve_github_token()
+        env_overrides: Optional[dict[str, str]] = (
+            {"GITHUB_TOKEN": token, "GH_TOKEN": token} if token else None
+        )
+        async with self._write_lock:
+            await self._run_cli(
+                ["plugin", "marketplace", "update", marketplace_name],
+                timeout=CLI_TIMEOUT_MARKETPLACE_ADD_SECONDS,
+                env_overrides=env_overrides,
+            )
 
     # --- internals -----------------------------------------------------
 
