@@ -127,6 +127,19 @@ def read_stored_github_access_token() -> str:
 
     return None
 
+def _save_user_data(user_data: dict) -> None:
+    """Single write path for ``~/.jupyter/nbi/user-data.json``.
+
+    The file is a secret (encrypted GitHub Copilot token). Force 0o600 on
+    every write so the file is never group/world-readable, even if a
+    prior write under a permissive umask or a manual chmod widened the
+    perms. Routing both write sites through this helper keeps the mode
+    contract in one place; a future third writer can't accidentally drop
+    it.
+    """
+    _atomic_write_json(user_data_file, user_data, mode=0o600)
+
+
 def write_github_access_token(access_token: str) -> bool:
     try:
         encrypted_access_token = encrypt_with_password(access_token_password, access_token.encode())
@@ -142,12 +155,7 @@ def write_github_access_token(access_token: str) -> bool:
         user_data.update({
             'github_access_token': base64_access_token
         })
-        # The encrypted token is a secret. Force 0o600 on every write so
-        # the file is never group/world-readable, even if a prior write
-        # under a permissive umask or a manual chmod widened the perms.
-        # The atomic helper rewrites via a sibling tempfile + rename, so
-        # the mode is applied to a fresh inode each time.
-        _atomic_write_json(user_data_file, user_data, mode=0o600)
+        _save_user_data(user_data)
         return True
     except Exception as e:
         log.error(f"Failed to write GitHub access token: {e}")
@@ -164,7 +172,7 @@ def delete_stored_github_access_token() -> bool:
             user_data = json.load(file)
         user_data.pop('github_access_token', None)
 
-        _atomic_write_json(user_data_file, user_data, mode=0o600)
+        _save_user_data(user_data)
         return True
     except Exception as e:
         log.error(f"Failed to delete GitHub access token: {e}")
