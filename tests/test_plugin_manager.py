@@ -167,6 +167,40 @@ class TestIsGithubMarketplaceSourceEnterprise:
         assert is_github_marketplace_source("https://github.acme.com/o/r") is False
         assert is_github_marketplace_source("https://github.com/o/r") is True
 
+    def test_trailing_dot_fqdn_still_matches(self, monkeypatch):
+        # urllib.parse.urlparse preserves the trailing dot on
+        # `github.com.`, which would otherwise bypass exact-match
+        # detection. The host-normalize helper strips the trailing dot.
+        monkeypatch.delenv("NBI_GITHUB_ENTERPRISE_HOSTS", raising=False)
+        assert is_github_marketplace_source("https://github.com./o/r") is True
+        monkeypatch.setenv("NBI_GITHUB_ENTERPRISE_HOSTS", "github.acme.com")
+        assert is_github_marketplace_source("https://github.acme.com./o/r") is True
+        assert is_github_marketplace_source("git@github.acme.com.:o/r") is True
+
+    def test_url_with_embedded_userinfo_is_rejected(self, monkeypatch):
+        # `https://user@github.com/o/r` resolves to host=github.com via
+        # urlparse, but a non-`git` userinfo is the lookalike-attack
+        # shape. The detector refuses to authorize token injection on
+        # such URLs even though the host extracted is github.com.
+        monkeypatch.delenv("NBI_GITHUB_ENTERPRISE_HOSTS", raising=False)
+        assert (
+            is_github_marketplace_source(
+                "https://attacker@github.com/owner/repo"
+            )
+            is False
+        )
+        assert (
+            is_github_marketplace_source(
+                "https://user:pw@github.com/owner/repo"
+            )
+            is False
+        )
+        # `git` is the conventional SSH user for git, so ssh://git@...
+        # remains accepted (regression guard for the legitimate path).
+        assert (
+            is_github_marketplace_source("ssh://git@github.com/o/r") is True
+        )
+
 
 class TestIsAcceptableMarketplaceSource:
     @pytest.mark.parametrize(

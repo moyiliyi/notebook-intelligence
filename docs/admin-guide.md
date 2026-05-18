@@ -462,7 +462,7 @@ Resolved tokens are injected into the `claude plugin marketplace add` subprocess
 NBI_GITHUB_ENTERPRISE_HOSTS=github.acme.com,ghe.example.com
 ```
 
-Tokens follow cookie-domain semantics: a bare token matches the exact host only; a leading-dot token (`.acme.com`) matches every subdomain of `acme.com`. Subdomain matching is opt-in because a broad declaration like a bare `acme.com` would silently inject `GITHUB_TOKEN` into any `*.acme.com` corp service (jira, artifactory, etc.) that someone happened to point marketplace-add at. Prefer the exact form; reach for the leading-dot form only when you actually have multiple GitHub subdomains under one apex.
+Tokens follow cookie-domain semantics: a bare token matches the exact host only; a leading-dot token (`.acme.com`) matches every subdomain of `acme.com`. Subdomain matching is opt-in because if suffix-matching were the default, declaring `acme.com` would silently inject `GITHUB_TOKEN` into any `*.acme.com` corp service (jira, artifactory, etc.) that someone happened to point marketplace-add at. Prefer the exact form; reach for the leading-dot form only when you actually have multiple GitHub subdomains under one apex.
 
 ```bash
 # Explicit opt-in to subdomain matching: covers github.acme.com,

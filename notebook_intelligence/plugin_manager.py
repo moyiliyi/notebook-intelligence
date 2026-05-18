@@ -85,6 +85,19 @@ def _enterprise_github_hosts() -> tuple[str, ...]:
     )
 
 
+def _normalize_host(host: str) -> str:
+    """Lowercase and strip a trailing dot from a hostname.
+
+    ``urllib.parse.urlparse`` preserves the trailing dot on FQDNs
+    (``github.com.``), and SCP shorthand carries through whatever the
+    user typed. Both surfaces feed into the GHE matcher's exact-equality
+    check, so a trailing dot would silently bypass detection. Normalize
+    once at the entry to ``_is_github_host`` so the rest of the
+    pipeline sees the canonical form.
+    """
+    return (host or "").lower().rstrip(".")
+
+
 def _host_matches_enterprise(host: str) -> bool:
     """True when ``host`` matches a configured GHE token.
 
@@ -111,6 +124,7 @@ def _is_github_host(host: str) -> bool:
     """True if ``host`` is github.com (or a github.com subdomain), or
     matches a configured GHE token. Single source of truth for the URL
     and SCP branches of `is_github_marketplace_source`."""
+    host = _normalize_host(host)
     if not host:
         return False
     if host == "github.com" or host.endswith(".github.com"):
@@ -164,8 +178,19 @@ def is_github_marketplace_source(source: str) -> bool:
             return True
     # ssh://git@github.com/owner/repo — `hostname` returns "github.com".
     if lower.startswith(_GITHUB_URL_SCHEMES):
-        host = (urllib.parse.urlparse(s).hostname or "").lower()
-        return _is_github_host(host)
+        parsed = urllib.parse.urlparse(s)
+        # Defense in depth: reject URLs that smuggle userinfo other than
+        # the conventional `git` username on ssh:// (so the embedded-
+        # userinfo lookalike `https://user@github.com/...` cannot reach
+        # a GitHub-token injection decision off of an attacker-supplied
+        # hostname). git/claude downstream would normalize the URL the
+        # same way and refuse, but the policy gate shouldn't depend on
+        # downstream sanitization.
+        if parsed.username and parsed.username != "git":
+            return False
+        if parsed.password:
+            return False
+        return _is_github_host(parsed.hostname or "")
     # owner/repo shorthand. Tolerate trailing slash and `.git` suffix;
     # reject anything path-like, whitespace-bearing, or containing SCP
     # / URL syntax characters (`@`, `:`). Without the `@`/`:` guard, an
