@@ -50,19 +50,19 @@ class TestRunRequestThreadPopsHandler:
     def test_pops_entry_when_coro_raises(self):
         # A worker exception must not leak the entry. The user may keep
         # the chat session open after a failed turn and start another;
-        # repeated failures must not grow the dict.
+        # repeated failures must not grow the dict. The wrapper deliberately
+        # re-raises (asyncio.run propagates) so the upstream error surfaces
+        # in thread-level logging; pytest.raises pins that contract.
         h = _make_handler()
         h._messageCallbackHandlers["m1"] = MessageCallbackHandlers(MagicMock(), MagicMock())
+
+        import pytest as _pytest
 
         async def boom():
             raise RuntimeError("upstream failure")
 
-        # The wrapper re-raises (asyncio.run propagates); the finally
-        # branch still cleans up.
-        try:
+        with _pytest.raises(RuntimeError, match="upstream failure"):
             h._run_request_thread(boom(), "m1")
-        except RuntimeError:
-            pass
 
         assert "m1" not in h._messageCallbackHandlers
 
