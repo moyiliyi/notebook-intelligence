@@ -1,7 +1,15 @@
 // Copyright (c) Mehmet Bektas <mbektasgh@outlook.com>
 
-import type { DocumentRegistry, DocumentWidget } from '@jupyterlab/docregistry';
+import type { DocumentRegistry } from '@jupyterlab/docregistry';
 import type { Contents } from '@jupyterlab/services';
+
+// The watcher only reads `.context` off each yielded widget. Keeping the
+// surface structural (rather than `DocumentWidget`) lets the unit test
+// pass a fake without casting and lets the live env binding apply its
+// own `instanceof DocumentWidget` filter without the type leaking here.
+export interface IRefreshWatcherWidget {
+  readonly context: DocumentRegistry.Context | null | undefined;
+}
 
 export const DEFAULT_REFRESH_POLL_INTERVAL_MS = 3000;
 
@@ -62,8 +70,8 @@ export function shouldRevertContext({
  * Contents singleton.
  */
 export interface IRefreshWatcherEnv {
-  /** Yield every currently-open DocumentWidget in the main shell. */
-  iterDocumentWidgets: () => Iterable<DocumentWidget>;
+  /** Yield every currently-open document widget the watcher should consider. */
+  iterDocumentWidgets: () => Iterable<IRefreshWatcherWidget>;
   /** Fetch on-disk metadata without the body (cheap stat-shaped call). */
   fetchDiskModel: (path: string) => Promise<Contents.IModel>;
   /** Set/clear the polling interval. Pulled out for fake timers in tests. */
@@ -115,8 +123,9 @@ export function attachOpenFileRefreshWatcher(
     inFlight = true;
     try {
       const seen = new Set<string>();
+      const checks: Array<Promise<void>> = [];
       for (const widget of options.env.iterDocumentWidgets()) {
-        const context: DocumentRegistry.Context | undefined = widget.context;
+        const context = widget.context;
         if (!context || !context.path) {
           continue;
         }
@@ -127,8 +136,13 @@ export function attachOpenFileRefreshWatcher(
           continue;
         }
         seen.add(context.path);
-        await checkOneContext(context, options);
+        checks.push(checkOneContext(context, options));
       }
+      // Fan out the per-context checks: each one issues a Contents.get
+      // and (rarely) a revert(); serializing them would multiply the
+      // wall-time cost linearly with open-tab count without any
+      // server-side rate-limit benefit.
+      await Promise.all(checks);
     } finally {
       inFlight = false;
     }
@@ -159,6 +173,15 @@ async function checkOneContext(
       isDisposed: context.isDisposed
     });
     if (!decision) {
+      return;
+    }
+    // Re-check dirty immediately before reverting. The fetchDiskModel
+    // await above is a yield point: a keystroke that lands in the
+    // intervening millisecond would flip the model dirty after our
+    // initial decision but before revert() commits, silently
+    // clobbering an in-flight character. Cheap second read closes the
+    // TOCTOU window.
+    if (context.model.dirty || context.isDisposed) {
       return;
     }
     await context.revert();

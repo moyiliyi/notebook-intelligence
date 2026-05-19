@@ -924,6 +924,9 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         });
     }
 
+    // JupyterLab plugins don't have a deactivate hook, so the watcher
+    // runs for the lifetime of the Lab session. We discard the teardown
+    // function here intentionally; it exists for test ergonomics.
     attachOpenFileRefreshWatcher({
       env: buildRefreshWatcherEnv(app, app.serviceManager.contents),
       isEnabled: () => refreshOnDiskEnabled

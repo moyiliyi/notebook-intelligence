@@ -126,10 +126,7 @@ function makeEnv(
   let tickHandler: (() => void) | null = null;
   return {
     env: {
-      iterDocumentWidgets: () =>
-        widgets as unknown as Iterable<
-          import('@jupyterlab/docregistry').DocumentWidget
-        >,
+      iterDocumentWidgets: () => widgets,
       fetchDiskModel: async path => {
         const entry = diskByPath[path];
         if (entry instanceof Error) {
@@ -237,6 +234,149 @@ describe('attachOpenFileRefreshWatcher', () => {
     await fireTick();
 
     expect(onError).toHaveBeenCalledWith('notebook.ipynb', expect.any(Error));
+    expect(ctx.revert).not.toHaveBeenCalled();
+  });
+
+  it('skips a tick that fires while the previous one is still in flight', async () => {
+    // Pin the re-entrancy guard: a slow Contents.get must not let the
+    // next interval-fired tick pile up checks against the same set of
+    // widgets. Without the guard, two overlapping ticks would each
+    // call revert() on the same already-newer file.
+    const ctx = makeContext();
+    let release: (() => void) | null = null;
+    const fetchDiskModel = jest.fn().mockImplementation(
+      () =>
+        new Promise<{
+          name: string;
+          path: string;
+          type: string;
+          writable: boolean;
+          created: string;
+          last_modified: string;
+          mimetype: string;
+          content: null;
+          format: null;
+        }>(resolve => {
+          release = () =>
+            resolve({
+              name: 'notebook.ipynb',
+              path: 'notebook.ipynb',
+              type: 'file',
+              writable: true,
+              created: '2026-01-01T00:00:00.000000Z',
+              last_modified: '2026-01-01T00:00:05.000000Z',
+              mimetype: 'text/plain',
+              content: null,
+              format: null
+            });
+        })
+    );
+    let tickHandler: (() => void) | null = null;
+    const env: IRefreshWatcherEnv = {
+      iterDocumentWidgets: () => [{ context: ctx }],
+      fetchDiskModel,
+      setInterval: handler => {
+        tickHandler = handler;
+        return 'h';
+      },
+      clearInterval: () => {
+        tickHandler = null;
+      }
+    };
+    attachOpenFileRefreshWatcher({ env, isEnabled: () => true });
+
+    tickHandler!();
+    // Second tick fires while the first is still awaiting the fetch.
+    tickHandler!();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(fetchDiskModel).toHaveBeenCalledTimes(1);
+
+    release!();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(ctx.revert).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports revert() rejections via onError', async () => {
+    // Disk-newer decision passes, revert() then throws (e.g. file
+    // deleted between the disk-check and the revert call). The error
+    // must land in onError, not bubble out and kill the poller.
+    const ctx = makeContext();
+    ctx.revert.mockRejectedValueOnce(new Error('file vanished'));
+    const { env, fireTick } = makeEnv([{ context: ctx }], {
+      'notebook.ipynb': '2026-01-01T00:00:05.000000Z'
+    });
+    const onError = jest.fn();
+    const onRevert = jest.fn();
+    attachOpenFileRefreshWatcher({
+      env,
+      isEnabled: () => true,
+      onError,
+      onRevert
+    });
+
+    await fireTick();
+
+    expect(ctx.revert).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith('notebook.ipynb', expect.any(Error));
+    // onRevert must not have fired since the revert call itself failed.
+    expect(onRevert).not.toHaveBeenCalled();
+  });
+
+  it('re-checks dirty between the disk fetch and the revert call', async () => {
+    // TOCTOU: the model is clean at decision time but goes dirty
+    // before revert(). The watcher must observe the second read and
+    // back off, not clobber the in-flight keystroke.
+    const ctx = makeContext();
+    let release: (() => void) | null = null;
+    const fetchDiskModel = jest.fn().mockImplementation(
+      () =>
+        new Promise<{
+          name: string;
+          path: string;
+          type: string;
+          writable: boolean;
+          created: string;
+          last_modified: string;
+          mimetype: string;
+          content: null;
+          format: null;
+        }>(resolve => {
+          release = () =>
+            resolve({
+              name: 'notebook.ipynb',
+              path: 'notebook.ipynb',
+              type: 'file',
+              writable: true,
+              created: '2026-01-01T00:00:00.000000Z',
+              last_modified: '2026-01-01T00:00:05.000000Z',
+              mimetype: 'text/plain',
+              content: null,
+              format: null
+            });
+        })
+    );
+    let tickHandler: (() => void) | null = null;
+    const env: IRefreshWatcherEnv = {
+      iterDocumentWidgets: () => [{ context: ctx }],
+      fetchDiskModel,
+      setInterval: handler => {
+        tickHandler = handler;
+        return 'h';
+      },
+      clearInterval: () => {
+        tickHandler = null;
+      }
+    };
+    attachOpenFileRefreshWatcher({ env, isEnabled: () => true });
+
+    tickHandler!();
+    // Simulate a keystroke arriving while the disk fetch is in flight.
+    ctx.model.dirty = true;
+    release!();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
     expect(ctx.revert).not.toHaveBeenCalled();
   });
 
