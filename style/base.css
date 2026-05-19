@@ -154,21 +154,10 @@
   }
 }
 
-/* Visually-hidden skip link at the top of the chat sidebar; revealed
-   only when focused so sighted users never see it and keyboard users
-   land on it as the very first Tab inside the sidebar. Uses the same
-   clip-based hide pattern as .nbi-sr-only above so a future RTL or
-   reflow can't paint a 9999px-wide ghost box. */
+/* Skip link at the top of the chat sidebar; hidden via .nbi-sr-only,
+   revealed only when focused so sighted users never see it and keyboard
+   users land on it as the very first Tab inside the sidebar. */
 .nbi-skip-link {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
   z-index: 1000;
 }
 

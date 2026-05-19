@@ -3774,7 +3774,7 @@ function SidebarComponent(props: any) {
       {chatEnabled && (
         <a
           href="#sidebar-user-input"
-          className="nbi-skip-link"
+          className="nbi-sr-only nbi-skip-link"
           onClick={event => {
             event.preventDefault();
             promptInputRef.current?.focus();
