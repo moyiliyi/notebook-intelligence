@@ -381,8 +381,9 @@ function ClaudeMCPAddDialog(props: {
       onSubmit={handleSubmit}
     >
       <div className="nbi-form-field">
-        <label>Scope</label>
+        <label htmlFor="nbi-mcp-add-scope">Scope</label>
         <select
+          id="nbi-mcp-add-scope"
           value={scope}
           onChange={e => setScope(e.target.value as ClaudeMCPScope)}
         >
@@ -468,8 +469,9 @@ function ClaudeMCPAddDialog(props: {
             />
           </div>
           <div className="nbi-form-field">
-            <label>Transport</label>
+            <label htmlFor="nbi-mcp-add-transport">Transport</label>
             <select
+              id="nbi-mcp-add-transport"
               value={transport}
               onChange={e => setTransport(e.target.value as ClaudeMCPTransport)}
             >
@@ -481,8 +483,11 @@ function ClaudeMCPAddDialog(props: {
             </select>
           </div>
           <div className="nbi-form-field">
-            <label>{transport === 'stdio' ? 'Command' : 'URL'}</label>
+            <label htmlFor="nbi-mcp-add-command-or-url">
+              {transport === 'stdio' ? 'Command' : 'URL'}
+            </label>
             <input
+              id="nbi-mcp-add-command-or-url"
               type="text"
               value={commandOrUrl}
               onChange={e => setCommandOrUrl(e.target.value)}
@@ -493,8 +498,9 @@ function ClaudeMCPAddDialog(props: {
           </div>
           {transport === 'stdio' && (
             <div className="nbi-form-field">
-              <label>Args (one per line)</label>
+              <label htmlFor="nbi-mcp-add-args">Args (one per line)</label>
               <textarea
+                id="nbi-mcp-add-args"
                 rows={3}
                 value={argsText}
                 onChange={e => setArgsText(e.target.value)}
@@ -504,8 +510,11 @@ function ClaudeMCPAddDialog(props: {
           )}
           {transport === 'stdio' && (
             <div className="nbi-form-field">
-              <label>Environment (KEY=value, one per line)</label>
+              <label htmlFor="nbi-mcp-add-env">
+                Environment (KEY=value, one per line)
+              </label>
               <textarea
+                id="nbi-mcp-add-env"
                 rows={3}
                 value={envText}
                 onChange={e => setEnvText(e.target.value)}
@@ -515,8 +524,11 @@ function ClaudeMCPAddDialog(props: {
           )}
           {transport !== 'stdio' && (
             <div className="nbi-form-field">
-              <label>Headers (Name: value, one per line)</label>
+              <label htmlFor="nbi-mcp-add-headers">
+                Headers (Name: value, one per line)
+              </label>
               <textarea
+                id="nbi-mcp-add-headers"
                 rows={3}
                 value={headersText}
                 onChange={e => setHeadersText(e.target.value)}
