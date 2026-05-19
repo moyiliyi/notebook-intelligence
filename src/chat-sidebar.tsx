@@ -1182,6 +1182,22 @@ function SidebarComponent(props: any) {
   const [loginClickCount, _setLoginClickCount] = useState(0);
   const [copilotRequestInProgress, setCopilotRequestInProgress] =
     useState(false);
+  // sr-only announcement string driven by request-in-progress transitions.
+  // Wrapping the whole transcript in aria-live would queue a polite
+  // announcement per streamed token — hostile for screen reader users.
+  // Instead announce at request boundaries: "Generating response" when
+  // a request starts, "Response complete" when it ends.
+  const [chatStatusAnnouncement, setChatStatusAnnouncement] = useState('');
+  const prevCopilotRequestInProgressRef = useRef(false);
+  useEffect(() => {
+    const prev = prevCopilotRequestInProgressRef.current;
+    if (!prev && copilotRequestInProgress) {
+      setChatStatusAnnouncement('Generating response.');
+    } else if (prev && !copilotRequestInProgress) {
+      setChatStatusAnnouncement('Response complete.');
+    }
+    prevCopilotRequestInProgressRef.current = copilotRequestInProgress;
+  }, [copilotRequestInProgress]);
   const [showPopover, setShowPopover] = useState(false);
   const [originalPrefixes, setOriginalPrefixes] = useState<string[]>([]);
   const [prefixSuggestions, setPrefixSuggestions] = useState<string[]>([]);
@@ -3772,6 +3788,14 @@ function SidebarComponent(props: any) {
           <div className="nbi-status-banner">New chat session started.</div>
         )}
       </div>
+      {/* sr-only polite region for chat-status boundary announcements.
+          The string toggles on copilotRequestInProgress transitions so
+          screen readers announce "Generating response." when a stream
+          starts and "Response complete." when it ends, without
+          re-announcing every streamed token. */}
+      <div className="nbi-sr-only" role="status" aria-live="polite">
+        {chatStatusAnnouncement}
+      </div>
       {!chatEnabled && !ghLoginRequired && (
         <div className="sidebar-login-info">
           Chat is disabled as you don't have a model configured.
@@ -3811,13 +3835,21 @@ function SidebarComponent(props: any) {
 
       {chatEnabled &&
         (chatMessages.length === 0 ? (
-          <div className="sidebar-messages">
+          <div
+            className="sidebar-messages"
+            role="log"
+            aria-label="Chat transcript"
+          >
             <div className="sidebar-greeting">
               Welcome! How can I assist you today?
             </div>
           </div>
         ) : (
-          <div className="sidebar-messages">
+          <div
+            className="sidebar-messages"
+            role="log"
+            aria-label="Chat transcript"
+          >
             {chatMessages.map((msg, index) => {
               // Only the most recent copilot message owns the live
               // progress-feedback state. Non-active messages receive
