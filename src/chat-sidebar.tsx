@@ -3614,7 +3614,8 @@ function SidebarComponent(props: any) {
         <div className="sidebar-title">Notebook Intelligence</div>
         {NBIAPI.config.isInClaudeCodeMode && (
           <>
-            <div
+            <button
+              type="button"
               className="user-input-footer-button"
               data-tour-id={TOUR_ANCHOR.newChat}
               onClick={() => startNewChatSession()}
@@ -3622,26 +3623,29 @@ function SidebarComponent(props: any) {
               aria-label="Start a new chat session"
             >
               <VscAdd />
-            </div>
-            <div
+            </button>
+            <button
+              type="button"
               className="user-input-footer-button"
               data-tour-id={TOUR_ANCHOR.claudeHistory}
               onClick={() => setShowClaudeSessionPicker(true)}
-              title="Resume previous Claude session"
+              aria-label="Resume previous Claude session"
+              title="Resume a Claude session you started earlier in this workspace"
             >
               <VscHistory />
-            </div>
+            </button>
           </>
         )}
-        <div
+        <button
+          type="button"
           className="user-input-footer-button"
           data-tour-id={TOUR_ANCHOR.settingsGear}
           onClick={() => handleSettingsButtonClick()}
-          title="Open Notebook Intelligence settings"
           aria-label="Open Notebook Intelligence settings"
+          title="Configure providers, API keys, MCP servers, and skills"
         >
           <VscSettingsGear />
-        </div>
+        </button>
       </div>
       <div className="nbi-status-banner-live" aria-live="polite">
         {skillsReloadedVisible && (
@@ -3940,7 +3944,8 @@ function SidebarComponent(props: any) {
                 </div>
               )}
               {chatMode !== 'ask' && !NBIAPI.config.isInClaudeCodeMode && (
-                <div
+                <button
+                  type="button"
                   className={`user-input-footer-button tools-button ${unsafeToolSelected ? 'tools-button-warning' : selectedToolCount > 0 ? 'tools-button-active' : ''}`}
                   onClick={() => handleChatToolsButtonClick()}
                   title={
@@ -3948,10 +3953,15 @@ function SidebarComponent(props: any) {
                       ? `Tool selection can cause irreversible changes! Review each tool execution carefully.\n${toolSelectionTitle}`
                       : toolSelectionTitle
                   }
+                  aria-label={
+                    unsafeToolSelected
+                      ? 'Configure tools (warning: irreversible tools selected)'
+                      : 'Configure tools'
+                  }
                 >
                   <VscTools />
                   {selectedToolCount > 0 && <>{selectedToolCount}</>}
-                </div>
+                </button>
               )}
               {NBIAPI.config.isInClaudeCodeMode && (
                 <span
