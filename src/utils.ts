@@ -340,6 +340,28 @@ function isDisallowedUriCodepoint(code: number): boolean {
 }
 
 /**
+ * True when `s` contains any codepoint in the same set `safeAnchorUri`
+ * rejects (C0/DEL/C1, NEL/NBSP/LS/PS/BOM, ZWSP, bidi-override controls).
+ * Mirrors the Python `has_dangerous_text_codepoints`. Used to scrub the
+ * `title` attribute on rendered anchors so an LLM-emitted hover tooltip
+ * can't visually impersonate the link via bidi-reorder or zero-width
+ * tricks.
+ */
+export function hasDangerousTextCodepoints(
+  s: string | undefined | null
+): boolean {
+  if (typeof s !== 'string') {
+    return false;
+  }
+  for (let i = 0; i < s.length; i++) {
+    if (isDisallowedUriCodepoint(s.charCodeAt(i))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Return `uri` if its scheme is in the chat-anchor allowlist, else null.
  * Mirrors the server-side `safe_anchor_uri` check so that anchor parts
  * coming from arbitrary LLM/tool output cannot render `javascript:`,

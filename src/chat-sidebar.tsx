@@ -72,10 +72,10 @@ import type { Contents } from '@jupyterlab/services';
 import {
   extractLLMGeneratedCode,
   isDarkTheme,
-  safeAnchorUri,
   writeTextToClipboard
 } from './utils';
 import { CheckBoxItem } from './components/checkbox';
+import { SafeAnchor } from './components/safe-anchor';
 import { mcpServerSettingsToEnabledState } from './components/mcp-util';
 import claudeSvgStr from '../style/icons/claude.svg';
 import { AskUserQuestion } from './components/ask-user-question';
@@ -836,23 +836,11 @@ function ChatResponse(props: any) {
                 </div>
               );
             case ResponseStreamDataType.Anchor: {
-              const safeUri = safeAnchorUri(item.content.uri);
-              if (!safeUri) {
-                return (
-                  <div className="chat-response-anchor" key={`key-${index}`}>
-                    <span>
-                      {item.content.title}
-                      <span className="nbi-sr-only"> (link blocked)</span>
-                    </span>
-                  </div>
-                );
-              }
               return (
                 <div className="chat-response-anchor" key={`key-${index}`}>
-                  <a href={safeUri} target="_blank" rel="noopener noreferrer">
+                  <SafeAnchor href={item.content.uri}>
                     {item.content.title}
-                    <span className="nbi-sr-only"> (opens in new tab)</span>
-                  </a>
+                  </SafeAnchor>
                 </div>
               );
             }
@@ -4956,48 +4944,28 @@ function GitHubCopilotLoginDialogBodyComponent(props: any) {
             memory.
           </div>
           <div>
-            <a
-              href="https://github.com/features/copilot"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <SafeAnchor href="https://github.com/features/copilot">
               GitHub Copilot
-              <span className="nbi-sr-only"> (opens in new tab)</span>
-            </a>{' '}
+            </SafeAnchor>{' '}
             requires a subscription and it has a free tier. GitHub Copilot is
             subject to the{' '}
-            <a
-              href="https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <SafeAnchor href="https://docs.github.com/en/site-policy/github-terms/github-terms-for-additional-products-and-features">
               GitHub Terms for Additional Products and Features
-              <span className="nbi-sr-only"> (opens in new tab)</span>
-            </a>
+            </SafeAnchor>
             .
           </div>
           <div>
             <h4>Privacy and terms</h4>
             By using Notebook Intelligence with GitHub Copilot subscription you
             agree to{' '}
-            <a
-              href="https://docs.github.com/en/copilot/responsible-use-of-github-copilot-features/responsible-use-of-github-copilot-chat-in-your-ide"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <SafeAnchor href="https://docs.github.com/en/copilot/responsible-use-of-github-copilot-features/responsible-use-of-github-copilot-chat-in-your-ide">
               GitHub Copilot chat terms
-              <span className="nbi-sr-only"> (opens in new tab)</span>
-            </a>
+            </SafeAnchor>
             . Review the terms to understand about usage, limitations and ways
             to improve GitHub Copilot. Please review{' '}
-            <a
-              href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
+            <SafeAnchor href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">
               Privacy Statement
-              <span className="nbi-sr-only"> (opens in new tab)</span>
-            </a>
+            </SafeAnchor>
             .
           </div>
           <div>
@@ -5046,13 +5014,9 @@ function GitHubCopilotLoginDialogBodyComponent(props: any) {
                 </b>
               </span>{' '}
               and enter at{' '}
-              <a
-                href={deviceActivationURL}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
+              <SafeAnchor href={deviceActivationURL}>
                 {deviceActivationURL}
-              </a>{' '}
+              </SafeAnchor>{' '}
               to allow access to GitHub Copilot from this app. Activation could
               take up to a minute after you enter the code.
             </div>

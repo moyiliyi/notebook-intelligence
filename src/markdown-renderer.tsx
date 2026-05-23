@@ -12,6 +12,8 @@ import {
 } from 'react-syntax-highlighter/dist/cjs/styles/prism';
 import { VscNewFile, VscInsert, VscCopy, VscNotebook, VscAdd } from './icons';
 import { JupyterFrontEnd } from '@jupyterlab/application';
+import { PathExt } from '@jupyterlab/coreutils';
+import { MarkdownLink } from './components/markdown-link';
 import { isDarkTheme, writeTextToClipboard } from './utils';
 import { IActiveDocumentInfo } from './tokens';
 
@@ -29,11 +31,39 @@ export function MarkdownRenderer({
   const app = getApp();
   const activeDocumentInfo = getActiveDocumentInfo();
   const isNotebook = activeDocumentInfo.filename.endsWith('.ipynb');
+  // Resolve workspace-relative LLM links against the active document's
+  // directory so `[file](README.md)` from a chat scoped to
+  // `notebooks/proj/work.ipynb` lands at `notebooks/proj/README.md` (the
+  // user's mental model) rather than the server-root README.
+  const linkBaseDir = activeDocumentInfo.filePath
+    ? PathExt.dirname(activeDocumentInfo.filePath)
+    : '';
 
   return (
+    // No `rehype-raw` plugin: raw HTML in chat markdown (e.g. an LLM
+    // emitting `<a href="javascript:...">`) renders as literal text, not
+    // a DOM anchor, so the only anchor sink is the CommonMark/GFM `a`
+    // node handled by `SafeAnchor` below. Any future change that enables
+    // raw HTML needs to add a rehype-sanitize pass alongside.
     <Markdown
       remarkPlugins={[remarkGfm]}
       components={{
+        // CommonMark `<https://...>` autolinks, `[text](url)`, and
+        // reference-style links all normalize to the same `a` node.
+        // `MarkdownLink` routes fragment-only and workspace-relative
+        // hrefs through Lab's docmanager so an LLM-emitted link can't
+        // replace the JupyterLab shell, and hands everything else to
+        // SafeAnchor for the `_blank` + scheme-allowlist treatment.
+        a: ({ href, title, children }: any) => (
+          <MarkdownLink
+            app={app}
+            baseDir={linkBaseDir}
+            href={href}
+            title={title}
+          >
+            {children}
+          </MarkdownLink>
+        ),
         code({ node, inline, className, children, getApp, ...props }: any) {
           const match = /language-(\w+)/.exec(className || '');
           const codeString = String(children).replace(/\n$/, '');

@@ -13,6 +13,7 @@ import {
   cellOutputAsText,
   applyCodeToSelectionInEditor,
   buildResumeCommand,
+  hasDangerousTextCodepoints,
   safeAnchorUri,
   shellSingleQuote,
   writeTextToClipboard
@@ -592,5 +593,34 @@ describe('safeAnchorUri', () => {
     const longPath = 'x'.repeat(8000);
     const uri = `https://example.com/${longPath}`;
     expect(safeAnchorUri(uri)).toBe(uri);
+  });
+});
+
+describe('hasDangerousTextCodepoints', () => {
+  it('returns false for ordinary text', () => {
+    expect(hasDangerousTextCodepoints('hello world')).toBe(false);
+    expect(hasDangerousTextCodepoints('a.b/c?d=1')).toBe(false);
+  });
+
+  it('returns false for empty / non-string input', () => {
+    expect(hasDangerousTextCodepoints('')).toBe(false);
+    expect(hasDangerousTextCodepoints(null)).toBe(false);
+    expect(hasDangerousTextCodepoints(undefined)).toBe(false);
+  });
+
+  it.each([
+    ['C0 control (tab)', '\t'],
+    ['C0 control (LF)', '\n'],
+    ['DEL', '\x7f'],
+    ['C1 control', '\x85'],
+    ['NBSP', '\u00A0'],
+    ['line separator', '\u2028'],
+    ['paragraph separator', '\u2029'],
+    ['BOM', '\uFEFF'],
+    ['zero-width space', '\u200B'],
+    ['RTL override', '\u202E'],
+    ['LRI', '\u2066']
+  ])('returns true for %s', (_, s) => {
+    expect(hasDangerousTextCodepoints(`safe${s}text`)).toBe(true);
   });
 });
