@@ -111,5 +111,5 @@ Tune the debounce delay in NBI Settings → Inline completion. Lower delays mean
 
 ## Still stuck?
 
-- Check [GitHub issues](https://github.com/notebook-intelligence/notebook-intelligence/issues) for similar reports.
+- Check [GitHub issues](https://github.com/plmbr/notebook-intelligence/issues) for similar reports.
 - Open a new issue including the information listed in [CONTRIBUTING.md](../CONTRIBUTING.md#filing-a-good-bug-report).
