@@ -211,6 +211,22 @@ describe('MarkdownLink (issue #344)', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('blocks empty href (react-markdown strips javascript: to empty)', () => {
+    // react-markdown's built-in urlTransform replaces unsafe schemes with
+    // an empty string before our override sees them; without this case
+    // the workspace-relative branch would render an inert `<a href="#">`
+    // that confuses the user.
+    const execute = jest.fn();
+    render(
+      <MarkdownLink app={fakeApp(execute)} baseDir="" href="">
+        click
+      </MarkdownLink>
+    );
+    expect(screen.queryByRole('link')).toBeNull();
+    expect(screen.getByText(/link blocked/)).toHaveClass('nbi-sr-only');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('passes through a clean workspace-relative title', () => {
     const execute = jest.fn();
     render(

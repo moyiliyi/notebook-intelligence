@@ -30,6 +30,15 @@ const SCHEME_PREFIX_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
  *   hover / in dev-tools logs.
  */
 function isUnsafeWorkspacePath(path: string): boolean {
+  // Empty / cwd-only paths reach here when react-markdown's built-in
+  // `urlTransform` strips an unsafe scheme (`javascript:`, `data:`, ...)
+  // to an empty string before our override runs: the result joins to
+  // either `""` or `"."`, both of which would render as a dead
+  // `<a href="#">` that 404s on click. Surface them as blocked-link
+  // spans so the user sees why nothing happened.
+  if (path === '' || path === '.' || path === './') {
+    return true;
+  }
   if (path.startsWith('/') || path === '..' || path.startsWith('../')) {
     return true;
   }
