@@ -59,6 +59,16 @@ github_auth = {
 # stay current.
 copilot_models_cache: list[dict] = []
 
+# Per-model HTTP path under API_ENDPOINT. Codex-class models advertise only
+# `/responses` (the OpenAI Responses API mirror) and 400 on `/chat/completions`;
+# everything else stays on `/chat/completions`. Populated by
+# `fetch_copilot_models` from each model entry's `supported_endpoints` field.
+# Lookup falls back to `/chat/completions` for unknown ids so the hardcoded
+# fallback model list keeps working before the first live fetch.
+_COPILOT_CHAT_ENDPOINT = "/chat/completions"
+_COPILOT_RESPONSES_ENDPOINT = "/responses"
+copilot_model_endpoints: dict[str, str] = {}
+
 # Conservative floor when the Copilot API omits limits for a model. Picked
 # to match the smallest token cap any Copilot-served model has historically
 # carried, so the token-budget meter (extension.py: `remaining_token_budget`)
@@ -419,6 +429,7 @@ def fetch_copilot_models() -> list[dict]:
 
     raw_models = payload.get("data", []) if isinstance(payload, dict) else []
     normalized: list[dict] = []
+    endpoints: dict[str, str] = {}
     seen_ids: set[str] = set()
     for entry in raw_models:
         if not isinstance(entry, dict):
@@ -426,7 +437,15 @@ def fetch_copilot_models() -> list[dict]:
         if not entry.get("model_picker_enabled"):
             continue
         caps = entry.get("capabilities", {}) or {}
-        if caps.get("type") != "chat":
+        supported = entry.get("supported_endpoints") or []
+        if not isinstance(supported, list):
+            supported = []
+        # Codex-class models advertise only `/responses` and may report a
+        # non-chat capability `type`. Accept them when the endpoint list says
+        # they're chattable, so they reach the dispatcher in `chat(...)`.
+        is_chat_type = caps.get("type") == "chat"
+        has_responses = _COPILOT_RESPONSES_ENDPOINT in supported
+        if not (is_chat_type or has_responses):
             continue
         model_id = entry.get("id")
         if not isinstance(model_id, str) or not model_id or model_id in seen_ids:
@@ -445,6 +464,15 @@ def fetch_copilot_models() -> list[dict]:
             context_window = _COPILOT_DEFAULT_CONTEXT_WINDOW
         if context_window <= 0:
             context_window = _COPILOT_DEFAULT_CONTEXT_WINDOW
+        # Prefer `/chat/completions` whenever the model advertises it; only
+        # route through `/responses` when that's the model's sole supported
+        # path. Mirrors codecompanion.nvim's Copilot adapter: dual-listing
+        # exists for forward compatibility, but established chat flows are
+        # still cheaper on the older endpoint.
+        if has_responses and _COPILOT_CHAT_ENDPOINT not in supported:
+            endpoints[model_id] = _COPILOT_RESPONSES_ENDPOINT
+        else:
+            endpoints[model_id] = _COPILOT_CHAT_ENDPOINT
         normalized.append({
             "id": model_id,
             "name": str(name),
@@ -460,12 +488,33 @@ def fetch_copilot_models() -> list[dict]:
 
     copilot_models_cache.clear()
     copilot_models_cache.extend(normalized)
+    copilot_model_endpoints.clear()
+    copilot_model_endpoints.update(endpoints)
     return list(copilot_models_cache)
 
 
 def invalidate_copilot_models_cache() -> None:
     """Clear the memoized Copilot chat-model list. Mostly used by tests."""
     copilot_models_cache.clear()
+    copilot_model_endpoints.clear()
+
+
+def _model_chat_endpoint(model_id: str) -> str:
+    """Pick the HTTP path for a Copilot chat request.
+
+    Trusts the live catalogue first: `fetch_copilot_models` populates
+    `copilot_model_endpoints` after login from each model's
+    `supported_endpoints` field. For ids the cache doesn't know (the
+    hardcoded fallback list, an offline session, a /models fetch that
+    failed), falls back to a substring heuristic: any id containing `codex`
+    routes to `/responses`, since the entire Codex family only accepts that
+    endpoint. Everything else stays on `/chat/completions`.
+    """
+    if model_id in copilot_model_endpoints:
+        return copilot_model_endpoints[model_id]
+    if "codex" in model_id.lower():
+        return _COPILOT_RESPONSES_ENDPOINT
+    return _COPILOT_CHAT_ENDPOINT
 
 def get_token_thread_func():
     global github_auth, get_token_thread, last_token_fetch_time
@@ -626,6 +675,309 @@ def _aggregate_streaming_response(client: sseclient.SSEClient) -> dict:
                     final_tool_calls[index]['function']['arguments'] += tool_call['function']['arguments']
 
     return _format_llm_response()
+
+def _messages_to_responses_input(messages: list[dict]) -> tuple[list[dict], str | None]:
+    """Translate an OpenAI chat-completions `messages` array into the shape
+    Copilot's `/responses` endpoint accepts.
+
+    System messages collapse into the top-level ``instructions`` field
+    (newline-joined when more than one is present). Assistant tool calls
+    expand to `function_call` items, tool results to `function_call_output`
+    items, and the remaining role/content pairs pass through with their
+    original role. Matches what codecompanion.nvim sends and what OpenAI's
+    own Responses migration guide documents.
+    """
+    instructions_parts: list[str] = []
+    input_items: list[dict] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "system":
+            if isinstance(content, str) and content:
+                instructions_parts.append(content)
+            continue
+        if role == "tool":
+            output = content if isinstance(content, str) else json.dumps(content)
+            input_items.append({
+                "type": "function_call_output",
+                "call_id": msg.get("tool_call_id"),
+                "output": output,
+            })
+            continue
+        if role == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                fn = (tc.get("function") or {}) if isinstance(tc, dict) else {}
+                call_id = tc.get("id") if isinstance(tc, dict) else None
+                input_items.append({
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": fn.get("name"),
+                    "arguments": fn.get("arguments", ""),
+                })
+            if isinstance(content, str) and content:
+                input_items.append({"role": role, "content": content})
+            continue
+        input_items.append({"role": role, "content": content if content is not None else ""})
+    instructions = "\n".join(instructions_parts) if instructions_parts else None
+    return input_items, instructions
+
+
+def _chat_tools_to_responses_tools(tools: list[dict] | None) -> list[dict] | None:
+    """Flatten chat-completions tool schemas to Responses-API shape.
+
+    Chat completions nests under ``{type: "function", function: {name, ...}}``;
+    Responses expects the function fields at the top level. The transform is
+    purely structural so a caller can keep emitting one schema upstream.
+    """
+    if not tools:
+        return None
+    out: list[dict] = []
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            out.append(tool)
+            continue
+        fn = tool.get("function") or {}
+        out.append({
+            "type": "function",
+            "name": fn.get("name"),
+            "description": fn.get("description"),
+            "parameters": fn.get("parameters"),
+        })
+    return out
+
+
+# Responses-API SSE event types that mean the server gave up mid-stream.
+# Treated as hard failures so callers see an exception instead of a silent
+# empty assistant turn; `response.incomplete` (max-tokens cap, etc.) is
+# included because Codex emits it in place of `response.completed` and the
+# partial content alone isn't enough signal for the chat sidebar.
+_RESPONSES_TERMINAL_ERROR_EVENTS = frozenset({
+    "response.failed",
+    "response.error",
+    "response.incomplete",
+    "error",
+})
+
+
+def _responses_error_message(chunk: dict) -> str:
+    """Extract the most descriptive error string a `response.failed` /
+    `response.error` event carries. Falls back to the raw type when the
+    server omits a message field."""
+    if not isinstance(chunk, dict):
+        return "GitHub Copilot returned an unparseable error event."
+    response_obj = chunk.get("response") or {}
+    for source in (chunk, response_obj):
+        if not isinstance(source, dict):
+            continue
+        err = source.get("error") if isinstance(source.get("error"), dict) else None
+        if err:
+            msg = err.get("message") or err.get("code")
+            if isinstance(msg, str) and msg:
+                return msg
+        msg = source.get("message")
+        if isinstance(msg, str) and msg:
+            return msg
+    return f"GitHub Copilot Responses stream emitted {chunk.get('type', 'unknown')!r} without a message."
+
+
+def _function_call_item_to_chat_tool(item: dict, *, fallback_arguments: str = "") -> dict | None:
+    """Turn a Responses-API `function_call` output item into the
+    chat-completions tool_call shape the rest of the codebase expects.
+    Returns None if the item should be skipped (wrong type, in-progress
+    status).
+    """
+    if not isinstance(item, dict) or item.get("type") != "function_call":
+        return None
+    if item.get("status") not in (None, "completed"):
+        return None
+    return {
+        "id": item.get("call_id") or item.get("id"),
+        "type": "function",
+        "function": {
+            "name": item.get("name") or "",
+            "arguments": item.get("arguments") or fallback_arguments or "{}",
+        },
+    }
+
+
+def _aggregate_responses_streaming(client: sseclient.SSEClient) -> dict:
+    """Drain a `/responses` SSE stream and return the same chat-completions
+    shape `_aggregate_streaming_response` emits, so callers see one wire
+    format regardless of which endpoint served the model.
+    """
+    final_content = ""
+    final_tool_calls: list[dict] = []
+    # Some Codex variants stream function-call arguments incrementally as
+    # `response.function_call_arguments.delta` events and only ship a
+    # zero-byte `arguments` field in the terminal `response.completed`
+    # item. Accumulate by `item_id` so we can stitch them back together
+    # if the terminal payload comes through empty.
+    arg_buffers: dict[str, str] = {}
+    for event in client.events():
+        if not event.data:
+            continue
+        try:
+            chunk = json.loads(event.data)
+        except (ValueError, json.JSONDecodeError):
+            continue
+        event_type = chunk.get("type")
+        if event_type in _RESPONSES_TERMINAL_ERROR_EVENTS:
+            raise Exception(_responses_error_message(chunk))
+        if event_type == "response.output_text.delta":
+            delta = chunk.get("delta")
+            if isinstance(delta, str):
+                final_content += delta
+        elif event_type == "response.function_call_arguments.delta":
+            item_id = chunk.get("item_id")
+            delta = chunk.get("delta")
+            if isinstance(item_id, str) and isinstance(delta, str):
+                arg_buffers[item_id] = arg_buffers.get(item_id, "") + delta
+        elif event_type == "response.completed":
+            resp_obj = chunk.get("response") or {}
+            for item in resp_obj.get("output") or []:
+                if not isinstance(item, dict):
+                    continue
+                buffered = arg_buffers.get(item.get("id") or "")
+                tc = _function_call_item_to_chat_tool(item, fallback_arguments=buffered or "")
+                if tc is not None:
+                    final_tool_calls.append(tc)
+            break
+    return {
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": final_content,
+                "tool_calls": final_tool_calls if final_tool_calls else None,
+            }
+        }]
+    }
+
+
+def responses(model_id, messages, tools = None, response: ChatResponse = None, cancel_token: CancelToken = None, options: dict = {}) -> Any:
+    """Send a chat turn through Copilot's `/responses` endpoint.
+
+    Required for Codex-class models, which 400 on `/chat/completions`. The
+    aggregate and streaming return shapes match `completions()` so callers
+    don't need an endpoint branch above this layer.
+    """
+    aggregate = response is None
+
+    try:
+        input_items, instructions = _messages_to_responses_input(messages)
+        data: dict[str, Any] = {
+            "model": model_id,
+            "input": input_items,
+            "stream": True,
+        }
+        if instructions:
+            data["instructions"] = instructions
+        responses_tools = _chat_tools_to_responses_tools(tools)
+        if responses_tools:
+            data["tools"] = responses_tools
+        if "tool_choice" in options:
+            data["tool_choice"] = options["tool_choice"]
+
+        if cancel_token is not None and cancel_token.is_cancel_requested:
+            if response is not None:
+                response.finish()
+            return
+
+        request = requests.post(
+            f"{API_ENDPOINT}{_COPILOT_RESPONSES_ENDPOINT}",
+            headers=generate_copilot_headers(),
+            json=data,
+            stream=True,
+        )
+
+        if request.status_code != 200:
+            msg = f"Failed to get responses from GitHub Copilot: [{request.status_code}]: {request.text}"
+            log.error(msg)
+            if response is not None:
+                response.stream(MarkdownData(msg))
+                response.finish()
+            raise Exception(msg)
+
+        client = sseclient.SSEClient(request)
+        if aggregate:
+            return _aggregate_responses_streaming(client)
+
+        # Streaming: translate typed Responses events into chat-completions
+        # delta chunks the existing frontend consumer already knows how to
+        # render. The shape `{choices: [{delta: {role, content}}]}` matches
+        # what `_aggregate_streaming_response` and `response.stream(...)`
+        # below produce for `/chat/completions`.
+        arg_buffers: dict[str, str] = {}
+        for event in client.events():
+            if cancel_token is not None and cancel_token.is_cancel_requested:
+                response.finish()
+                return
+            if not event.data:
+                continue
+            try:
+                chunk = json.loads(event.data)
+            except (ValueError, json.JSONDecodeError):
+                continue
+            event_type = chunk.get("type")
+            if event_type in _RESPONSES_TERMINAL_ERROR_EVENTS:
+                msg = _responses_error_message(chunk)
+                log.error(f"GitHub Copilot Responses stream failed: {msg}")
+                response.stream(MarkdownData(msg))
+                response.finish()
+                raise Exception(msg)
+            if event_type == "response.output_text.delta":
+                delta = chunk.get("delta")
+                if isinstance(delta, str) and delta:
+                    response.stream({
+                        "choices": [{
+                            "delta": {"role": "assistant", "content": delta}
+                        }]
+                    })
+            elif event_type == "response.function_call_arguments.delta":
+                item_id = chunk.get("item_id")
+                delta = chunk.get("delta")
+                if isinstance(item_id, str) and isinstance(delta, str):
+                    arg_buffers[item_id] = arg_buffers.get(item_id, "") + delta
+            elif event_type == "response.completed":
+                resp_obj = chunk.get("response") or {}
+                tool_calls: list[dict] = []
+                for idx, item in enumerate(resp_obj.get("output") or []):
+                    if not isinstance(item, dict):
+                        continue
+                    buffered = arg_buffers.get(item.get("id") or "")
+                    tc = _function_call_item_to_chat_tool(item, fallback_arguments=buffered or "")
+                    if tc is None:
+                        continue
+                    tc["index"] = idx
+                    tool_calls.append(tc)
+                if tool_calls:
+                    response.stream({
+                        "choices": [{
+                            "delta": {"role": "assistant", "tool_calls": tool_calls}
+                        }]
+                    })
+                response.finish()
+                return
+        response.finish()
+        return
+    except requests.exceptions.ConnectionError:
+        raise Exception("Connection error")
+    except Exception as e:
+        log.error(f"Failed to get responses from GitHub Copilot: {e}")
+        raise e
+
+
+def chat(model_id, messages, tools = None, response: ChatResponse = None, cancel_token: CancelToken = None, options: dict = {}) -> Any:
+    """Endpoint-aware chat entry point. Routes Codex-class models to
+    `/responses` and everything else to `/chat/completions`. Callers from
+    the LLM provider should go through this rather than `completions(...)`
+    directly so per-model dispatch stays in one place.
+    """
+    if _model_chat_endpoint(model_id) == _COPILOT_RESPONSES_ENDPOINT:
+        return responses(model_id, messages, tools, response, cancel_token, options)
+    return completions(model_id, messages, tools, response, cancel_token, options)
+
 
 def completions(model_id, messages, tools = None, response: ChatResponse = None, cancel_token: CancelToken = None, options: dict = {}) -> Any:
     aggregate = response is None

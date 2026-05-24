@@ -5,7 +5,7 @@ from typing import Any
 import requests
 from notebook_intelligence.api import ChatModel, EmbeddingModel, InlineCompletionModel, LLMProvider, CancelToken, ChatResponse, CompletionContext
 from notebook_intelligence import github_copilot as gh_copilot
-from notebook_intelligence.github_copilot import generate_copilot_headers, completions, inline_completions
+from notebook_intelligence.github_copilot import chat as copilot_chat, generate_copilot_headers, inline_completions
 import logging
 
 log = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ class GitHubCopilotChatModel(ChatModel):
         return self._supports_tools
 
     def completions(self, messages: list[dict], tools: list[dict] = None, response: ChatResponse = None, cancel_token: CancelToken = None, options: dict = {}) -> Any:
-        return completions(self._model_id, messages, tools, response, cancel_token, options)
+        return copilot_chat(self._model_id, messages, tools, response, cancel_token, options)
 
 class GitHubCopilotInlineCompletionModel(InlineCompletionModel):
     def __init__(self, provider: LLMProvider, model_id: str, model_name: str):
