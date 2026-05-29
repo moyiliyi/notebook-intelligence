@@ -497,9 +497,7 @@ describe('buildResumeCommand', () => {
   });
 
   it('falls back to a bare resume when cwd is empty', () => {
-    expect(buildResumeCommand('', 'abc-123')).toBe(
-      "claude --resume 'abc-123'"
-    );
+    expect(buildResumeCommand('', 'abc-123')).toBe("claude --resume 'abc-123'");
   });
 });
 
