@@ -176,6 +176,15 @@ jlpm lint         # check and auto-fix prettier, eslint, and stylelint
 
 CI runs `lint:check`. Identifiers prefixed with `_` are treated as intentionally unused and excluded from the unused-vars rule.
 
+### Automatic formatting
+
+Two optional layers catch formatting drift before it reaches CI, so a common lint failure (an unformatted `.md`, `.ts`, or `.css` file) never makes it into a commit:
+
+- **Pre-commit hook.** `jlpm install` registers a [Husky](https://typicode.github.io/husky/) hook (via a `postinstall` script) that runs `prettier --write` on staged files through [lint-staged](https://github.com/lint-staged/lint-staged). Staged files are formatted and re-staged automatically before the commit completes. Husky no-ops when there is no Git checkout (for example during `pip install` builds from an sdist) and when `HUSKY=0` is set, so it never affects packaging. To skip it for a single commit, use `git commit --no-verify`; to opt out entirely, run `HUSKY=0 jlpm install`.
+- **Editor format-on-save.** `.editorconfig` and `.vscode/` settings format files with Prettier on save. Install the recommended VS Code extensions (you will be prompted, or see `.vscode/extensions.json`) to enable it.
+
+Both layers only run Prettier, which is safe to apply automatically; ESLint and Stylelint rule violations are still left for you and CI to surface. Neither layer changes what CI enforces; both just move the formatting fix earlier. `jlpm lint` remains the manual catch-all.
+
 If `jlpm install` produces unexpected lockfile changes, your local Yarn version probably differs from the one bundled with JupyterLab. `jlpm` ships with JupyterLab — use it directly instead of a system-wide `yarn`.
 
 ## Packaging
