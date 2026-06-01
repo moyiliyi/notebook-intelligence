@@ -90,7 +90,11 @@ ENV/
 .venv/
 .env/
 venv*/
-.vscode/
+.vscode/*
+# Share Prettier-on-save settings and extension recommendations; keep all
+# other (per-user) VS Code files ignored.
+!.vscode/settings.json
+!.vscode/extensions.json
 # celery beat schedule file
 celerybeat-schedule
 
