@@ -423,6 +423,20 @@ def _scrub_credentials_for_wire(claude_settings: dict, string_overrides: dict) -
     return result
 
 
+def _read_claude_spinner_verbs():
+    import json
+    settings_path = os.path.join(
+        os.environ.get('CLAUDE_CONFIG_DIR') or os.path.join(os.path.expanduser('~'), '.claude'),
+        'settings.json'
+    )
+    try:
+        with open(settings_path) as f:
+            data = json.load(f)
+        return data.get('spinnerVerbs') or None
+    except Exception:
+        return None
+
+
 class GetCapabilitiesHandler(APIHandler):
     disabled_tools = []
     allow_enabling_tools_with_env = False
@@ -524,6 +538,7 @@ class GetCapabilitiesHandler(APIHandler):
             "claude_settings": _scrub_credentials_for_wire(
                 nbi_config.claude_settings, self.string_overrides
             ),
+            "spinner_verbs": _read_claude_spinner_verbs(),
             "claude_models": ai_service_manager.claude_models,
             # Drive launcher-tile visibility (issues #183, #260). Each flag
             # gates one tile under the "Coding Agent" category. Detection is
