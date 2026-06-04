@@ -50,6 +50,12 @@ dependencies = [
     "mcp>=1.27.0",
     "claude-agent-sdk",
     "anthropic>=0.22.1",
+    # Used to tear down an agent subprocess and its descendants (shells, MCP
+    # servers, dev servers) on cancel; see util.terminate_process_tree. Already
+    # present transitively via jupyterlab -> ipykernel, but the cancel teardown
+    # depends on it for first-class behavior, so the contract is made explicit.
+    # >=5.7 matches ipykernel's floor and covers the API used.
+    "psutil>=5.7",
     # Transitive lower bounds for known CVEs whose parents don't pin
     # tightly enough on their own.
     "mistune>=3.2.1",  # CVE-2026-33441

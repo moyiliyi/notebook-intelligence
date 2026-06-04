@@ -22,7 +22,7 @@ import logging
 from claude_agent_sdk import AssistantMessage, PermissionResultAllow, PermissionResultDeny, TextBlock, ToolResultBlock, ToolUseBlock, UserMessage, create_sdk_mcp_server, ClaudeAgentOptions, ClaudeSDKClient, tool
 from anthropic.types.text_block import TextBlock as AnthropicTextBlock
 
-from notebook_intelligence.util import ThreadSafeWebSocketConnector, _emit, get_jupyter_root_dir, resolve_claude_cli_path, safe_jupyter_path
+from notebook_intelligence.util import ThreadSafeWebSocketConnector, _emit, get_jupyter_root_dir, resolve_claude_cli_path, safe_jupyter_path, terminate_process_tree
 
 log = logging.getLogger(__name__)
 
@@ -848,12 +848,26 @@ class ClaudeCodeClient():
                 if nbi_request_obj is not None and nbi_request_obj.cancel_token.is_cancel_requested:
                     try:
                         process: Process = self._client._transport._process
-                        process.kill()
+                        # Tear down the whole process tree, not just the Claude CLI
+                        # child: the agent may have spawned shells, MCP servers, and
+                        # dev servers that a bare child-only kill would orphan. The
+                        # teardown (SIGTERM, grace, then SIGKILL on survivors) runs on
+                        # a background thread so this cancel returns immediately; the
+                        # reconnect on the next request spawns a fresh client and
+                        # subprocess that share no state with the dying tree.
+                        pid = process.pid if process is not None else None
+                        if pid:
+                            threading.Thread(
+                                target=terminate_process_tree,
+                                args=(pid,),
+                                name="nbi-claude-cancel-teardown",
+                                daemon=True,
+                            ).start()
 
                         self._reconnect_required = True
                         self._continue_conversation = True
                     except Exception as e:
-                        log.error(f"Error occurred while setting current request and response to None: {str(e)}")
+                        log.error(f"Error tearing down Claude subprocess on cancel: {str(e)}")
                     if self._reconnect_required:
                         self._mark_as_disconnected()
                     return {
