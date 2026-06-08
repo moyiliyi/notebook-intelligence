@@ -14,6 +14,10 @@ For each release we list user-facing changes grouped as **Added**, **Changed**, 
 
 5.1.0 builds on 5.0.x with a focus on Claude-mode agent visibility. Tool calls the agent runs now render as persistent status cards with inline diffs and collapsible grouping, the generating indicator can cycle custom verbs, and cancelling a turn tears down the whole process tree the agent spawned instead of leaking it. It also adds two opt-in security guardrails (an MCP stdio-command allowlist and a default-token-password check on shared filesystems) and an always-visible mode for chat feedback. No traitlet, env-var, REST route, or on-disk-format renames or removals; every new admin surface is opt-in and listed below.
 
+### Upgrade note
+
+If you installed NBI before the 5.0 npm-scope rename (from `@notebook-intelligence/notebook-intelligence` to `@plmbr/notebook-intelligence`) and now see **two Notebook Intelligence icons** in the sidebar, an old labextension is lingering alongside the new one and JupyterLab is loading both. Run `jupyter labextension list`; if both scopes show as enabled, remove the stale `@notebook-intelligence` labextension directory. See [Two Notebook Intelligence icons in the sidebar](docs/troubleshooting.md#two-notebook-intelligence-icons-in-the-sidebar) (#367).
+
 ### Added
 
 - **Claude agent tool calls render as persistent status cards** (#358). Each tool the agent runs in Claude mode appears as its own card showing a kind icon (read / edit / execute / other), a humanized label, and a live status (in progress, completed, failed, cancelled) that stays on screen after the turn ends instead of scrolling away as transient progress text. Built-in and `mcp__<server>__<tool>` names map to friendly labels, with a sentence-case fallback for unknown tools.
