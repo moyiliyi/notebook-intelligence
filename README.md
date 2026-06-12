@@ -90,6 +90,25 @@ If the Claude Code CLI is on `PATH`, NBI launches it automatically. To override 
 
 <img src="media/claude-settings.png" alt="Claude settings" width=700 />
 
+#### Permission modes
+
+In Claude mode the chat input footer shows a shield-icon button (to the left of the send button) that sets the agent's permission mode for the chat panel, matching the modes in Claude Code and the Claude VS Code extension. Click it to choose:
+
+- **Default**: every tool call the agent wants to run goes through NBI's confirmation prompt. You approve or reject each one. This is the starting mode.
+- **Accept Edits**: file edits the agent makes apply without a per-edit prompt; other tool calls (running commands, etc.) still go through the confirmation prompt. Useful for iterative work where you trust the edits but still want a gate on everything else.
+- **Plan**: the agent researches and proposes a plan **without making any changes**, then presents it for approval. Approving runs the plan and returns the selector to **Default**; rejecting keeps it planning. This replaces the old `/enter-plan-mode` slash command.
+- **Bypass Permissions**: NBI's confirmation prompt is skipped for **every** tool call, including the Claude Code CLI's own Bash / Write / Edit running in the agent subprocess. The agent runs everything with your full account access and no confirmation, and any untrusted content it reads can steer what it runs. See the gating notes below.
+
+Default, Accept Edits, and Plan switch the moment you pick them. The selected mode travels with each message you send and is applied to the agent before the turn runs; switching mid-conversation takes effect on your next message.
+
+The mode does not persist across sessions: starting a **New chat session** (or `/clear`) resets the selector to its starting mode, and a fresh Claude client always begins in Default.
+
+Choosing **Bypass Permissions** does not arm it immediately. It opens a confirmation step; only after you confirm does bypass take effect, and while it is active the shield turns into a red warning icon as a persistent indicator. Bypass must be re-armed each session: starting a new chat or restarting the Claude client drops back to Default. And because the server re-checks the requested mode on every message, an armed bypass can never outlive a policy that an administrator has since turned off.
+
+**Admin gating.** Bypass Permissions is **off by default** and hidden from the selector unless an administrator enables it: it is governed by the `claude_bypass_permissions` policy (`NBI_CLAUDE_BYPASS_PERMISSIONS_POLICY`), the only admin policy whose default is `force-off` rather than `user-choice`. The requested mode is also clamped on the server for every message, so the gate can't be bypassed by a hand-crafted request. Independently, NBI honors Claude Code's enterprise [managed settings](https://code.claude.com/docs/en/settings): `permissions.disableBypassPermissionsMode` removes the option regardless of the NBI policy, and `permissions.defaultMode` sets the selector's starting mode (Bypass excepted, since it never auto-arms). See [Allowing Bypass Permissions](docs/admin-guide.md#allowing-bypass-permissions-in-the-claude-permission-mode-selector) in the admin guide.
+
+The `/enter-plan-mode` and `/exit-plan-mode` slash commands still work if typed but are no longer offered in autocomplete; the selector replaces them and will retire the commands in a future release.
+
 #### Resuming a previous Claude session
 
 When Claude mode is on, the chat sidebar shows a history icon next to the gear. Click it to list the Claude Code sessions recorded for the current working directory (the same transcripts the Claude Code CLI stores under `~/.claude/projects/`). Selecting a session reconnects via `resume`, so the next message you send continues that transcript with full prior context. A **New chat session** button next to the gear restarts the SDK client without typing `/clear`.
