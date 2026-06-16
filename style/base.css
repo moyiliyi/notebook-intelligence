@@ -344,6 +344,114 @@
   outline: none;
 }
 
+.permission-mode-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* The armed-bypass color must out-specify the shared footer-button
+   :hover and :focus-visible rules (the button takes focus after arming),
+   so each state is listed explicitly. */
+.permission-mode-button.permission-mode-button-bypass,
+.permission-mode-button.permission-mode-button-bypass:hover,
+.permission-mode-button.permission-mode-button-bypass:focus-visible {
+  color: var(--jp-error-color1);
+}
+
+.permission-mode-menu {
+  position: absolute;
+  bottom: 32px;
+  right: 0;
+  z-index: 100;
+  min-width: 160px;
+  padding: 4px;
+  background-color: var(--jp-layout-color1);
+  border: 1px solid var(--jp-border-color1);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+}
+
+.permission-mode-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--jp-ui-font-color1);
+  font-size: var(--jp-ui-font-size1);
+  border-radius: 2px;
+}
+
+.permission-mode-menu-item:hover,
+.permission-mode-menu-item:focus-visible {
+  background-color: var(--jp-layout-color2);
+  outline: none;
+}
+
+.permission-mode-menu-item-bypass {
+  color: var(--jp-error-color1);
+}
+
+.permission-mode-menu-check {
+  display: inline-flex;
+  width: 16px;
+  flex-shrink: 0;
+}
+
+/* Echo the trigger glyph next to each mode in the menu so the icon-only
+   footer button is learnable (issue #377). */
+.permission-mode-menu-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* Positioned via an inline style in a body-level portal (see
+   permission-mode-select.tsx) so it escapes the sidebar's stacking context:
+   an absolutely-positioned child of the sidebar gets clipped by the icon rail
+   on the left and covered by the main content panel on the right (issue #377).
+   The portal carries position/left/bottom/width inline; this rule is just the
+   look. z-index out-paints the JupyterLab shell. */
+.permission-mode-confirm {
+  z-index: 10000;
+  box-sizing: border-box;
+  padding: 10px;
+  background-color: var(--jp-layout-color1);
+  border: 1px solid var(--jp-error-color1);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+}
+
+.permission-mode-confirm-message {
+  color: var(--jp-ui-font-color1);
+  font-size: var(--jp-ui-font-size1);
+  margin-bottom: 8px;
+}
+
+.permission-mode-confirm-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Shrink the confirm-to-arm actions: the default jp-Dialog-button sizing is
+   oversized for this inline popover. The 24px floor keeps each target tall
+   enough (WCAG 2.5.8) even if a dense theme shrinks the UI font, while the
+   compact padding keeps it from looking like a full dialog button (#377). */
+.permission-mode-confirm-buttons .jp-Dialog-button {
+  min-width: 0;
+  min-height: 24px;
+  height: auto;
+  padding: 4px 10px;
+  font-size: var(--jp-ui-font-size1);
+  line-height: 1.4;
+}
+
 .user-input-footer-button {
   width: 24px;
   height: 24px;

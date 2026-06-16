@@ -298,6 +298,158 @@ def get_current_claude_client() -> ClaudeSDKClient:
     global _current_claude_client
     return _current_claude_client
 
+# The subset of the SDK's PermissionMode literals NBI exposes (issue #359).
+# "dontAsk" and "auto" are deliberately excluded: both skip the
+# human-in-the-loop gate the way bypass does, without the arming UX.
+CLAUDE_PERMISSION_MODES = ("default", "acceptEdits", "plan", "bypassPermissions")
+CLAUDE_BYPASS_PERMISSION_MODE = "bypassPermissions"
+DEFAULT_PERMISSION_MODE = "default"
+
+# Claude Code's enterprise managed-settings locations, one per platform.
+_MANAGED_SETTINGS_PATHS = (
+    "/Library/Application Support/ClaudeCode/managed-settings.json",
+    "/etc/claude-code/managed-settings.json",
+    "C:\\ProgramData\\ClaudeCode\\managed-settings.json",
+)
+
+
+def _claude_managed_permissions() -> Optional[dict]:
+    """Best-effort read of the ``permissions`` block of Claude Code's
+    enterprise managed settings.
+
+    Returns ``None`` when no managed-settings file exists. A file that
+    exists but cannot be parsed returns a block that disables bypass:
+    an admin clearly tried to manage this machine, so the safe reading
+    of a corrupt file is the most restrictive one.
+    """
+    for path in _MANAGED_SETTINGS_PATHS:
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            permissions = data.get("permissions") if isinstance(data, dict) else None
+            return permissions if isinstance(permissions, dict) else {}
+        except Exception as exc:
+            log.warning(
+                f"Could not read Claude managed settings at {path}; treating bypass as disabled: {exc}"
+            )
+            return {"disableBypassPermissionsMode": True}
+    return None
+
+
+def claude_bypass_disabled_by_managed_settings() -> bool:
+    permissions = _claude_managed_permissions()
+    return bool(permissions and permissions.get("disableBypassPermissionsMode"))
+
+
+def claude_managed_default_permission_mode() -> Optional[str]:
+    """The ``permissions.defaultMode`` from managed settings, when valid."""
+    permissions = _claude_managed_permissions() or {}
+    mode = permissions.get("defaultMode")
+    return mode if mode in CLAUDE_PERMISSION_MODES else None
+
+
+def resolve_permission_mode(requested: str, allow_bypass: bool) -> str:
+    """Clamp a client-requested permission mode at the request boundary.
+
+    Fails closed: unknown modes collapse to default, and bypass is only
+    honored when both the NBI policy allows it and managed settings don't
+    forbid it, so a hand-rolled websocket request can't escalate past
+    what the selector UI offers.
+    """
+    if requested not in CLAUDE_PERMISSION_MODES:
+        return DEFAULT_PERMISSION_MODE
+    if requested == CLAUDE_BYPASS_PERMISSION_MODE and (
+        not allow_bypass or claude_bypass_disabled_by_managed_settings()
+    ):
+        return DEFAULT_PERMISSION_MODE
+    return requested
+
+
+# These module globals are written only from the single Claude client
+# thread (connect, the query loop, and the SDK-invoked permission handler
+# all run there), mirroring the existing _current_claude_client /
+# set_current_request singletons. The only cross-thread hop is
+# write_message, which marshals onto the Tornado loop. A future
+# multi-client or per-session refactor would need to revisit this.
+_current_permission_mode = DEFAULT_PERMISSION_MODE
+_permission_mode_notifier: Optional[ThreadSafeWebSocketConnector] = None
+
+
+def set_permission_mode_notifier(connector: Optional[ThreadSafeWebSocketConnector]):
+    global _permission_mode_notifier
+    _permission_mode_notifier = connector
+
+
+def get_current_permission_mode() -> str:
+    return _current_permission_mode
+
+
+def _notify_permission_mode(mode: str, reset: bool = False):
+    if _permission_mode_notifier is None:
+        return
+    try:
+        _permission_mode_notifier.write_message({
+            "type": BackendMessageType.ClaudePermissionModeChange,
+            "data": {"mode": mode, "reset": reset}
+        })
+    except Exception as e:
+        log.error(f"Error occurred while sending permission mode change to websocket: {str(e)}")
+
+
+def reset_permission_mode_tracking():
+    """A fresh SDK client starts in default mode; realign tracking and the UI.
+
+    The notification is flagged ``reset`` and carries the selector's
+    *starting* value, which honors managed settings' defaultMode. The UI
+    applies it only to retire bypass (which never survives a reset, even as
+    a managed default: re-arming is always manual) and otherwise keeps the
+    user's explicit selection, so a mid-session reconnect (skills reload, a
+    config change) doesn't clobber the chosen mode (issue #377). The next
+    request applies whatever the selector then shows.
+    """
+    global _current_permission_mode
+    _current_permission_mode = DEFAULT_PERMISSION_MODE
+    starting = claude_managed_default_permission_mode() or DEFAULT_PERMISSION_MODE
+    if starting == CLAUDE_BYPASS_PERMISSION_MODE:
+        starting = DEFAULT_PERMISSION_MODE
+    _notify_permission_mode(starting, reset=True)
+
+
+async def apply_permission_mode(sdk_client: ClaudeSDKClient, mode: str) -> bool:
+    """Switch the SDK's permission mode when it differs from the applied one.
+
+    Every switch goes through here (selector requests, the hidden plan-mode
+    slash aliases, and the plan-approval reset) so the tracked mode and the
+    UI notification can't drift from what the SDK was actually told.
+
+    Bypass is realized in NBI's own ``custom_permission_handler`` rather than
+    the CLI's ``bypassPermissions`` mode: the CLI refuses that mode unless the
+    session was launched with ``--dangerously-skip-permissions``, and that flag
+    skips ALL permission prompts for the whole session (it can't be scoped to
+    the bypass turns only), which would silently un-gate default / acceptEdits
+    / plan too (issue #377). Instead bypass keeps the CLI in ``default`` and the
+    handler auto-allows every tool while ``_current_permission_mode`` is bypass,
+    so the gate stays fully under NBI's control.
+
+    This does NOT re-check the bypass policy: callers must pass a mode that was
+    already clamped by ``resolve_permission_mode`` at the request boundary, or a
+    hardcoded non-bypass literal.
+    """
+    global _current_permission_mode
+    if mode not in CLAUDE_PERMISSION_MODES or mode == _current_permission_mode:
+        return False
+    cli_mode = (
+        DEFAULT_PERMISSION_MODE
+        if mode == CLAUDE_BYPASS_PERMISSION_MODE
+        else mode
+    )
+    await sdk_client.set_permission_mode(cli_mode)
+    _current_permission_mode = mode
+    _notify_permission_mode(mode)
+    return True
+
 def tool_text_response(text: Any, *, is_error: bool = False) -> dict[str, Any]:
     """Shape an MCP tool result. Set ``is_error=True`` for rejection paths.
 
@@ -772,6 +924,8 @@ class ClaudeCodeClient():
                 self._set_status(ClaudeAgentClientStatus.Connected)
                 self._connect_resolved.set()
                 set_current_claude_client(client)
+                set_permission_mode_notifier(self._websocket_connector)
+                reset_permission_mode_tracking()
 
                 while True:
                     queue = self._client_queue
@@ -788,6 +942,13 @@ class ClaudeCodeClient():
 
                             set_current_request(request)
                             set_current_response(response)
+                            # Refresh per query: the websocket reconnects on
+                            # every page reload while this client thread (and
+                            # its agent subprocess) persists, so the connector
+                            # captured at connect time goes stale. The
+                            # participant pushes the live connector onto this
+                            # client, so re-read it here.
+                            set_permission_mode_notifier(self._websocket_connector)
 
                             messages = request.chat_history
                             query_lines = []
@@ -801,16 +962,27 @@ class ClaudeCodeClient():
 
                             already_handled = False
 
+                            # Hidden aliases kept for one release after the
+                            # selector replaced them in the UI (issue #359);
+                            # they're filtered out of autocomplete on the
+                            # frontend but still work when typed.
                             if client_query.startswith('/enter-plan-mode'):
-                                await client.set_permission_mode("plan")
+                                await apply_permission_mode(client, "plan")
                                 response.stream(MarkdownData("&#x2713; Entered plan mode"))
                                 already_handled = True
                             elif client_query.startswith('/exit-plan-mode'):
-                                await client.set_permission_mode("default")
+                                await apply_permission_mode(client, DEFAULT_PERMISSION_MODE)
                                 response.stream(MarkdownData("&#x2713; Exit plan mode"))
                                 already_handled = True
 
                             if not already_handled and not request.cancel_token.is_cancel_requested:
+                                # The mode was clamped against the bypass
+                                # policy and managed settings at the websocket
+                                # boundary; here it only needs applying.
+                                await apply_permission_mode(
+                                    client,
+                                    request.permission_mode or DEFAULT_PERMISSION_MODE,
+                                )
                                 await client.query(client_query)
                                 # Per-query map from tool_use_id to its
                                 # (title, kind) so the ToolResultBlock echo
@@ -922,6 +1094,16 @@ class ClaudeCodeClient():
                         except Exception as e:
                             log.error(f"Error occurred while clearing chat history: {str(e)}")
                         finally:
+                            # A new session must not inherit an armed bypass:
+                            # realign permission tracking to default and tell the
+                            # UI, mirroring a fresh client connect. Without this,
+                            # /clear leaves _current_permission_mode at bypass and
+                            # the handler keeps auto-allowing every tool in the
+                            # supposedly fresh session (issue #377). Refresh the
+                            # notifier first since the connector goes stale across
+                            # a page reload while this thread persists.
+                            set_permission_mode_notifier(self._websocket_connector)
+                            reset_permission_mode_tracking()
                             _emit(signal, {"id": event_id, "data": "chat history cleared"})
                     elif event_type == ClaudeAgentEventType.StopClient:
                         _emit(signal, {"id": event_id, "data": "stopped"})
@@ -1372,6 +1554,13 @@ async def custom_permission_handler(
 
     log.debug(f"Custom permission handler called for tool {tool_name} with input {input_data} and context {context}")
 
+    # Bypass Permissions: auto-allow every tool without prompting. NBI realizes
+    # bypass here rather than via the CLI's bypassPermissions mode (which needs
+    # an un-scopable launch flag); the mode only reaches here clamped against
+    # the policy at the request boundary (issue #377).
+    if get_current_permission_mode() == CLAUDE_BYPASS_PERMISSION_MODE:
+        return PermissionResultAllow()
+
     response = get_current_response()
     callback_id = str(uuid.uuid4())
 
@@ -1405,7 +1594,7 @@ async def custom_permission_handler(
         ))
         user_input = await ChatResponse.wait_for_chat_user_input(response, callback_id)
         if user_input['confirmed'] == True:
-            await get_current_claude_client().set_permission_mode("default")
+            await apply_permission_mode(get_current_claude_client(), DEFAULT_PERMISSION_MODE)
             return PermissionResultAllow(updated_input={"message": "Plan approved", "approved": True})
         else:
             return PermissionResultDeny(message="User did not confirm the plan", interrupt=True)
