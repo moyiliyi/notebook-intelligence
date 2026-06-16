@@ -3,8 +3,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  MdOutlinePsychology,
   VscCheck,
+  VscChecklist,
   VscPassFilled,
   VscShield,
   VscWarning
@@ -56,7 +56,7 @@ function iconFor(mode: string): JSX.Element {
     case 'acceptEdits':
       return <VscPassFilled aria-hidden="true" />;
     case 'plan':
-      return <MdOutlinePsychology aria-hidden="true" />;
+      return <VscChecklist aria-hidden="true" />;
     default:
       return <VscShield aria-hidden="true" />;
   }
@@ -73,7 +73,7 @@ export interface IPermissionModeSelectProps {
  *
  * A compact footer icon button that opens a menu of modes rather than a
  * wide dropdown, to keep the narrow input footer uncluttered. Each mode has
- * a distinct glyph (shield / check / brain / warning) so the active selection
+ * a distinct glyph (shield / check / checklist / warning) so the active selection
  * reads at a glance, and the menu echoes the same glyphs (#359, #377).
  * Default / Accept Edits / Plan switch immediately. Bypass Permissions is
  * listed only when the admin policy allows it and never switches on the

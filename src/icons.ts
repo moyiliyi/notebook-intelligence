@@ -34,6 +34,7 @@ export const VscArrowDown = asIcon(Vsc.VscArrowDown);
 export const VscArrowUp = asIcon(Vsc.VscArrowUp);
 export const VscAttach = asIcon(Vsc.VscAttach);
 export const VscCheck = asIcon(Vsc.VscCheck);
+export const VscChecklist = asIcon(Vsc.VscChecklist);
 export const VscChevronDown = asIcon(Vsc.VscChevronDown);
 export const VscChevronRight = asIcon(Vsc.VscChevronRight);
 export const VscChevronUp = asIcon(Vsc.VscChevronUp);
@@ -73,4 +74,3 @@ export const MdCheckBox = asIcon(Md.MdCheckBox);
 export const MdOutlineCheckBoxOutlineBlank = asIcon(
   Md.MdOutlineCheckBoxOutlineBlank
 );
-export const MdOutlinePsychology = asIcon(Md.MdOutlinePsychology);
